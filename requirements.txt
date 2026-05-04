@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────
+# NLP Project 3 — Emotion Recognition
+# Optimised for Apple Silicon (M1/M2/M3) — MPS backend
+# Python 3.10 recommended
+#
+# Install order matters on Apple Silicon:
+#   1. pip install torch torchaudio          (native MPS build, no index-url needed)
+#   2. pip install -r requirements.txt
+# ─────────────────────────────────────────────
+
+# ── PyTorch (native Apple Silicon build — includes MPS support)
+# Do NOT use the cu118/cu121 index-url on Mac — just run:
+#   pip install torch torchaudio
+torch>=2.2.0
+torchaudio>=2.2.0
+
+# ── Hugging Face ecosystem
+transformers>=4.38.0
+datasets>=2.18.0
+accelerate>=0.27.0
+evaluate>=0.4.1
+tokenizers>=0.15.0
+
+# ── Audio processing
+# Note: on M2, install via conda first if you hit libsndfile errors:
+#   conda install -c conda-forge libsndfile
+librosa>=0.10.1
+soundfile>=0.12.1
+audioread>=3.0.1
+
+# ── Data & ML
+scikit-learn>=1.4.0
+pandas>=2.1.0
+numpy>=1.26.0
+
+# ── Visualisation
+matplotlib>=3.8.0
+seaborn>=0.13.0
+
+# ── Experiment config & utilities
+pyyaml>=6.0.1
+tqdm>=4.66.0
+python-dotenv>=1.0.0
+
+# ── Notebook
+jupyter>=1.0.0
+ipykernel>=6.29.0
+ipywidgets>=8.1.0
+
+# ── Reproducibility & logging
+tensorboard>=2.15.0
+
+# ── Optional: faster tokenisation
+sentencepiece>=0.1.99
+
+ftfy>=6.3.1
