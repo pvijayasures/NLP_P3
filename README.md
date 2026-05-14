@@ -99,6 +99,84 @@ ls data/raw/train_sent_emo.csv data/raw/dev_sent_emo.csv data/raw/test_sent_emo.
 ls data/raw/audio/train data/raw/audio/dev data/raw/audio/test
 ```
 
+---
+
+## Preprocessing pipeline
+
+Run the three steps below **in order** before opening the experiment notebook.  
+Each step is idempotent — safe to re-run if interrupted.
+
+### Step 0 — Convert mp4 → 16 kHz mono WAV
+
+Scans `data/raw/audio/{train,dev,test}/` and writes `data/wav_16k/{split}/{stem}.wav`.  
+Already-converted files are skipped automatically.
+
+```bash
+python -m src.preprocessing.convert_to_wav          # all three splits
+# or a single split:
+python -m src.preprocessing.convert_to_wav train
+```
+
+### Step 1 — Build manifests (CSV → parquet)
+
+Aligns the MELD CSVs with the WAV files and applies the 8-class label mapping  
+(`surprise` is split into `surprise_positive` / `surprise_negative` via the Sentiment column).  
+Writes `data/processed/{split}_manifest.parquet`.
+
+> **Requires Step 0 to have run first** — the manifest links to `data/wav_16k/`.
+
+```bash
+python -m src.preprocessing.build_manifest
+```
+
+### Step 2 — Extract openSMILE audio features
+
+Reads the 16 kHz WAVs and saves feature vectors to `data/features/{split}_{feature_set}.parquet`.  
+Failed utterances are logged to `data/features/{split}_{feature_set}_failed.csv`.
+
+```bash
+# eGeMAPS v02 — 88 features (default, fastest)
+python -m src.preprocessing.extract_audio_features
+
+# IS10 — 1582 features (slowest, most expressive)
+python -m src.preprocessing.extract_audio_features is10
+
+# emobase — 988 features
+python -m src.preprocessing.extract_audio_features emobase
+```
+
+Run all three feature sets to unlock every model variant in the notebook:
+
+```bash
+for fs in egemaps is10 emobase; do
+    python -m src.preprocessing.extract_audio_features $fs
+done
+```
+
+---
+
+## Run the experiment notebook
+
+After preprocessing is complete, register the venv as a Jupyter kernel and open the notebook:
+
+```bash
+python -m ipykernel install --user --name nlp_p3 --display-name "NLP_P3 (venv)"
+jupyter notebook notebook/audio_experiments.ipynb
+```
+
+Select the **NLP_P3 (venv)** kernel, then run cells top-to-bottom.  
+Each training cell is independent — re-run any single cell to retrain that model.
+
+To execute the full notebook non-interactively:
+
+```bash
+python -m jupyter nbconvert \
+  --to notebook --execute --inplace \
+  --ExecutePreprocessor.timeout=3600 \
+  --ExecutePreprocessor.kernel_name=nlp_p3 \
+  notebook/audio_experiments.ipynb
+```
+
 ## Citation
 
 Please cite the following papers if you find this dataset useful in your research:
