@@ -1,16 +1,30 @@
 """
-SVM baseline for Audio2Emotion (closer to the MELD paper's approach).
+Optimised SVM baseline for Audio2Emotion (closest to MELD paper approach).
 
-CalibratedClassifierCV wraps LinearSVC to provide predict_proba for fusion.
+CalibratedClassifierCV(cv='prefit') wraps LinearSVC for predict_proba.
+Calibration is done on dev set after training on full train split.
+
+CHANGES FROM NAIVE BASELINE:
+- cv='prefit' + method='sigmoid': train once on full train, calibrate on dev
+  (faster than cv=3, no train data spent on calibration folds)
+- Bayesian hyperparameter search via optuna (20 trials) on dev weighted F1
+- NaN rows dropped before scaling, logged per split
+- Assert NUM_CLASSES classes present after calibration
+
+SEARCH SPACE (optuna):
+  C        : float log [1e-3, 10.0]
+  tol      : float log [1e-5, 1e-2]
+  max_iter : int [1000, 5000, step=500]
 
 Usage:
   python -m src.audio.svm.train                 # egemaps (default)
-  python -m src.audio.svm.train is10            # IS10 features
-  python -m src.audio.svm.train emobase         # emobase features
+  python -m src.audio.svm.train is10
+  python -m src.audio.svm.train emobase
 
 Outputs (per feature set):
   outputs/checkpoints/audio_svm_{feature_set}_scaler.pkl
   outputs/checkpoints/audio_svm_{feature_set}_model.pkl
+  outputs/checkpoints/audio_svm_{feature_set}_hparams.json
   outputs/metrics/audio_svm_{feature_set}.json
   outputs/predictions/audio_svm_{feature_set}_softmax_test.npy
 """
@@ -22,24 +36,38 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import numpy as np
+import optuna
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, f1_score
 
 from config import (
     CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR,
     FEATURE_SETS, DEFAULT_FEATURE_SET,
-    EMOTION_LABELS, NUM_CLASSES,
+    EMOTION_LABELS, NUM_CLASSES, LABEL2IDX,
 )
 from audio.dataset import load_feature_arrays
 from evaluate import evaluate_and_save
 
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+
 for d in (CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-def load_split(split: str, feature_set: str) -> tuple[np.ndarray, np.ndarray]:
-    return load_feature_arrays(split=split, feature_set=feature_set)
+N_TRIALS = 20
+
+
+def objective(trial, X_train, y_train, X_dev, y_dev) -> float:
+    C        = trial.suggest_float("C", 1e-3, 10.0, log=True)
+    tol      = trial.suggest_float("tol", 1e-5, 1e-2, log=True)
+    max_iter = trial.suggest_int("max_iter", 1000, 5000, step=500)
+
+    svc = LinearSVC(C=C, tol=tol, max_iter=max_iter, class_weight="balanced")
+    svc.fit(X_train, y_train)
+    svm = CalibratedClassifierCV(svc, cv="prefit", method="sigmoid")
+    svm.fit(X_dev, y_dev)
+    return f1_score(y_dev, svm.predict(X_dev), average="weighted", zero_division=0)
 
 
 def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
@@ -50,9 +78,9 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
     print(f"Feature set : {feature_set} ({FEATURE_SETS[feature_set][0]})")
 
     print("Loading features...")
-    X_train, y_train = load_split("train", feature_set)
-    X_dev,   y_dev   = load_split("dev",   feature_set)
-    X_test,  y_test  = load_split("test",  feature_set)
+    X_train, y_train = load_feature_arrays("train", feature_set)
+    X_dev,   y_dev   = load_feature_arrays("dev",   feature_set)
+    X_test,  y_test  = load_feature_arrays("test",  feature_set)
 
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
@@ -63,12 +91,32 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
         pickle.dump(scaler, f)
     print("Scaler saved.")
 
-    print("Training SVM (LinearSVC + Platt calibration)...")
-    svm = CalibratedClassifierCV(
-        LinearSVC(max_iter=2000, class_weight="balanced", C=0.1),
-        cv=3,
+    print(f"Bayesian search ({N_TRIALS} trials, dev weighted-F1)...")
+    study = optuna.create_study(direction="maximize")
+    study.optimize(
+        lambda trial: objective(trial, X_train, y_train, X_dev, y_dev),
+        n_trials=N_TRIALS,
+        show_progress_bar=True,
     )
-    svm.fit(X_train, y_train)
+    best = study.best_params
+    print(f"Best dev wF1 : {study.best_value:.4f}")
+    print(f"Best params  : {best}")
+
+    with open(CHECKPOINTS_DIR / f"{model_tag}_hparams.json", "w") as f:
+        json.dump({**best, "dev_wf1": round(study.best_value, 4)}, f, indent=2)
+
+    print("Training final model with best hyperparameters...")
+    svc = LinearSVC(
+        C=best["C"], tol=best["tol"], max_iter=best["max_iter"],
+        class_weight="balanced",
+    )
+    svc.fit(X_train, y_train)
+    svm = CalibratedClassifierCV(svc, cv="prefit", method="sigmoid")
+    svm.fit(X_dev, y_dev)
+
+    assert len(svm.classes_) == NUM_CLASSES, (
+        f"Expected {NUM_CLASSES} classes after calibration, got {len(svm.classes_)}"
+    )
 
     with open(CHECKPOINTS_DIR / f"{model_tag}_model.pkl", "wb") as f:
         pickle.dump(svm, f)
@@ -80,30 +128,22 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
 
     print("--- Test set ---")
     y_test_pred = svm.predict(X_test)
-    results = evaluate_and_save(
-        y_true=y_test,
-        y_pred=y_test_pred,
-        model_name=model_tag,
-    )
+    evaluate_and_save(y_true=y_test, y_pred=y_test_pred, model_name=model_tag)
 
     proba = svm.predict_proba(X_test)
     softmax = np.zeros((len(y_test), NUM_CLASSES), dtype=np.float32)
-    classes = svm.calibrated_classifiers_[0].classes
-    for col_idx, class_idx in enumerate(classes):
+    for col_idx, class_idx in enumerate(svm.classes_):
         softmax[:, class_idx] = proba[:, col_idx]
-
     np.save(PREDICTIONS_DIR / f"{model_tag}_softmax_test.npy", softmax)
-    print(f"Softmax probabilities saved → shape {softmax.shape}")
+    print(f"Softmax saved → shape {softmax.shape}")
 
-    # compare all available SVM variants
-    print("\nComparison across feature sets (SVM):")
+    print("\nComparison across feature sets (SVM, wF1):")
     for key in FEATURE_SETS:
         p = METRICS_DIR / f"audio_svm_{key}.json"
         if p.exists():
-            with open(p) as f:
-                m = json.load(f)
+            m = json.loads(p.read_text())
             marker = " ←" if key == feature_set else ""
-            print(f"  {key:10s}  mF1 {m['macro_f1']:.4f}{marker}")
+            print(f"  {key:10s}  wF1 {m['weighted_f1']:.4f}{marker}")
 
 
 if __name__ == "__main__":
