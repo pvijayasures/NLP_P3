@@ -1,16 +1,19 @@
 """
-Training loop for Audio2Emotion (eGeMAPS → MLP).
+Training loop for Audio2Emotion (openSMILE features → MLP).
 
 Usage:
   python -m src.audio.mlp.train
+  python -m src.audio.mlp.train is10
+  python -m src.audio.mlp.train emobase
 
-Outputs:
-  models/audio_egemaps_best.pt        best checkpoint (by dev weighted-F1)
-  outputs/metrics/audio_egemaps.json  test metrics
-  outputs/plots/cm_audio_egemaps.png  confusion matrix
+Outputs (per feature set):
+  models/audio_{feature_set}_best.pt        best checkpoint (by dev weighted-F1)
+  outputs/metrics/audio_{feature_set}.json  test metrics
+  outputs/plots/cm_audio_{feature_set}.png  confusion matrix
 """
 
 import sys
+import json
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -20,12 +23,11 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from sklearn.metrics import f1_score
 
-from config import MODELS_DIR, RANDOM_SEED, NUM_CLASSES
+from config import MODELS_DIR, METRICS_DIR, RANDOM_SEED, NUM_CLASSES, FEATURE_SETS, DEFAULT_FEATURE_SET
 from audio.dataset import AudioFeaturesDataset
 from audio.mlp.model import AudioMLP, AUDIO_LR, AUDIO_EPOCHS, AUDIO_BATCH
 from evaluate import evaluate_and_save
 
-CHECKPOINT = MODELS_DIR / "audio_egemaps_best.pt"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 torch.manual_seed(RANDOM_SEED)
@@ -60,16 +62,25 @@ def run_epoch(model, loader, criterion, optimizer=None):
             all_labels.extend(y.cpu().tolist())
 
     avg_loss = total_loss / len(loader.dataset)
-    wf1 = f1_score(all_labels, all_preds, average="weighted", zero_division=0)
-    return avg_loss, wf1
+    mf1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
+    return avg_loss, mf1
 
 
-def train():
+def checkpoint_path(feature_set: str) -> Path:
+    return MODELS_DIR / f"audio_mlp_{feature_set}_best.pt"
+
+
+def train(feature_set: str = DEFAULT_FEATURE_SET):
+    if feature_set not in FEATURE_SETS:
+        raise ValueError(f"Unknown feature set '{feature_set}'. Valid: {list(FEATURE_SETS)}")
+
+    checkpoint = checkpoint_path(feature_set)
     print(f"Device: {DEVICE}")
+    print(f"Feature set: {feature_set} ({FEATURE_SETS[feature_set][0]})")
 
-    train_ds = AudioFeaturesDataset("train")
-    dev_ds   = AudioFeaturesDataset("dev",  scaler=train_ds.scaler)
-    test_ds  = AudioFeaturesDataset("test", scaler=train_ds.scaler)
+    train_ds = AudioFeaturesDataset("train", feature_set=feature_set)
+    dev_ds   = AudioFeaturesDataset("dev",  feature_set=feature_set, scaler=train_ds.scaler)
+    test_ds  = AudioFeaturesDataset("test", feature_set=feature_set, scaler=train_ds.scaler)
 
     train_loader = DataLoader(train_ds, batch_size=AUDIO_BATCH, shuffle=True, drop_last=True)
     dev_loader   = DataLoader(dev_ds,   batch_size=AUDIO_BATCH, shuffle=False)
@@ -90,18 +101,18 @@ def train():
 
         print(
             f"Epoch {epoch:02d}/{AUDIO_EPOCHS} | "
-            f"train loss {train_loss:.4f} wF1 {train_f1:.4f} | "
-            f"dev loss {dev_loss:.4f} wF1 {dev_f1:.4f}"
+            f"train loss {train_loss:.4f} mF1 {train_f1:.4f} | "
+            f"dev loss {dev_loss:.4f} mF1 {dev_f1:.4f}"
             + (" ← best" if dev_f1 > best_dev_f1 else "")
         )
 
         if dev_f1 > best_dev_f1:
             best_dev_f1 = dev_f1
-            torch.save(model.state_dict(), CHECKPOINT)
+            torch.save(model.state_dict(), checkpoint)
 
-    print(f"\nBest dev weighted-F1: {best_dev_f1:.4f}")
+    print(f"\nBest dev macro-F1: {best_dev_f1:.4f}")
 
-    model.load_state_dict(torch.load(CHECKPOINT, map_location=DEVICE))
+    model.load_state_dict(torch.load(checkpoint, map_location=DEVICE))
     model.eval()
 
     all_preds, all_labels = [], []
@@ -114,9 +125,19 @@ def train():
     evaluate_and_save(
         y_true=np.array(all_labels),
         y_pred=np.array(all_preds),
-        model_name="audio_egemaps",
+        model_name=f"audio_mlp_{feature_set}",
     )
+
+    print("\nComparison across feature sets (MLP):")
+    for key in FEATURE_SETS:
+        p = METRICS_DIR / f"audio_mlp_{key}.json"
+        if p.exists():
+            with open(p) as f:
+                m = json.load(f)
+            marker = " ←" if key == feature_set else ""
+            print(f"  {key:10s}  mF1 {m['macro_f1']:.4f}{marker}")
 
 
 if __name__ == "__main__":
-    train()
+    fs = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_FEATURE_SET
+    train(fs)

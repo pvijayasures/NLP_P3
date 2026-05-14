@@ -4,6 +4,7 @@ ROOT = Path(__file__).parent.parent
 
 # Rohdaten
 RAW_DIR       = ROOT / "data" / "raw"
+WAV_DIR       = ROOT / "data" / "wav_16k"   # pre-converted 16kHz mono WAVs (one-time, reusable)
 PROCESSED_DIR = ROOT / "data" / "processed"
 FEATURES_DIR  = ROOT / "data" / "features"
 MODELS_DIR       = ROOT / "models"
@@ -45,14 +46,10 @@ ROBERTA_BATCH_SIZE = 64
 # key → (FeatureSet name, FeatureLevel name, parquet suffix)
 FEATURE_SETS: dict[str, tuple[str, str]] = {
     "egemaps": ("eGeMAPSv02",    "Functionals"),  # 88 features
-    "is10":    ("IS10_paraling", "Functionals"),  # 1582 features — closest to MELD baseline
+    "is10":    ("IS10",          "Functionals"),  # 1582 features — closest to MELD baseline
     "emobase": ("emobase",       "Functionals"),  # 988 features — emotion-specific
 }
 DEFAULT_FEATURE_SET = "egemaps"
-
-# Legacy aliases kept for existing scripts
-OPENSMILE_FEATURE_SET   = FEATURE_SETS[DEFAULT_FEATURE_SET][0]
-OPENSMILE_FEATURE_LEVEL = FEATURE_SETS[DEFAULT_FEATURE_SET][1]
 
 # Training
 RANDOM_SEED = 42

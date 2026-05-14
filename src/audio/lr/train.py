@@ -20,30 +20,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import numpy as np
-import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
 
 from config import (
-    FEATURES_DIR, CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR,
+    CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR,
     FEATURE_SETS, DEFAULT_FEATURE_SET,
     EMOTION_LABELS, NUM_CLASSES,
 )
+from audio.dataset import load_feature_arrays
 from evaluate import evaluate_and_save
 
 for d in (CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-ID_COLS = {"dialogue_id", "utterance_id", "label_idx"}
-
-
 def load_split(split: str, feature_set: str) -> tuple[np.ndarray, np.ndarray]:
-    df = pd.read_parquet(FEATURES_DIR / f"{split}_{feature_set}.parquet")
-    feat_cols = [c for c in df.columns if c not in ID_COLS]
-    X = df[feat_cols].values.astype(np.float32)
-    y = df["label_idx"].values.astype(int)
-    return X, y
+    return load_feature_arrays(split=split, feature_set=feature_set)
 
 
 def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
@@ -109,7 +102,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
             with open(p) as f:
                 m = json.load(f)
             marker = " ←" if key == feature_set else ""
-            print(f"  {key:10s}  wF1 {m['weighted_f1']:.4f}{marker}")
+            print(f"  {key:10s}  mF1 {m['macro_f1']:.4f}{marker}")
 
 
 if __name__ == "__main__":

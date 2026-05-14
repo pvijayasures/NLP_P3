@@ -1,12 +1,13 @@
 """
-Phase 2: Audio (.mp4) → openSMILE feature vectors.
+Phase 2: 16kHz WAV → openSMILE feature vectors.
 
-Reads each split's manifest CSV, extracts features per utterance, and saves to
-data/features/{split}_{feature_set}.parquet.
+Reads pre-converted WAVs from data/wav_16k/{split}/ (produced by convert_to_wav.py)
+and saves features to data/features/{split}_{feature_set}.parquet.
 
 Keys (dialogue_id, utterance_id, label_idx) are preserved for joining.
-mp4 files are converted to temporary 16kHz mono WAVs before openSMILE processing.
 Failed utterances are logged to {split}_{feature_set}_failed.csv.
+
+Run convert_to_wav.py once before this script.
 
 Usage:
   python -m src.preprocessing.extract_audio_features               # egemaps (default)
@@ -15,20 +16,17 @@ Usage:
   python -m src.preprocessing.extract_audio_features egemaps train # single split
 """
 
-import os
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pandas as pd
-import torchaudio
 import opensmile
 from tqdm import tqdm
 
 from config import (
-    ROOT, PROCESSED_DIR, FEATURES_DIR,
+    ROOT, PROCESSED_DIR, FEATURES_DIR, WAV_DIR,
     FEATURE_SETS, DEFAULT_FEATURE_SET,
 )
 
@@ -61,18 +59,6 @@ def build_smile(feature_set_key: str) -> opensmile.Smile:
     return opensmile.Smile(feature_set=fs, feature_level=fl)
 
 
-def mp4_to_wav_16k(mp4_path: Path) -> str:
-    """Decode mp4, convert to mono 16kHz, write to a temp WAV. Caller cleans up."""
-    waveform, sr = torchaudio.load(str(mp4_path))
-    if waveform.shape[0] > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
-    if sr != 16000:
-        waveform = torchaudio.functional.resample(waveform, orig_freq=sr, new_freq=16000)
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    torchaudio.save(tmp.name, waveform, 16000)
-    return tmp.name
-
-
 def extract_split(split: str, smile: opensmile.Smile, feature_set_key: str) -> pd.DataFrame:
     manifest_path = PROCESSED_DIR / f"manifest_{split}.csv"
     manifest = pd.read_csv(manifest_path)
@@ -86,43 +72,39 @@ def extract_split(split: str, smile: opensmile.Smile, feature_set_key: str) -> p
         desc=f"[{split}/{feature_set_key}] extracting",
         ncols=90,
     ):
-        audio_path = ROOT / row["audio_path"]
+        dia_id   = int(row["dialogue_id"])
+        utt_id   = int(row["utterance_id"])
+        wav_path = ROOT / row["audio_path"]
 
-        if not audio_path.exists():
-            tqdm.write(f"  [WARN] missing: {audio_path.name}")
+        if not wav_path.exists():
+            tqdm.write(f"  [WARN] missing: {wav_path.name}")
             failed_ids.append({
-                "dialogue_id":  int(row["dialogue_id"]),
-                "utterance_id": int(row["utterance_id"]),
+                "dialogue_id":  dia_id,
+                "utterance_id": utt_id,
                 "reason": "file_not_found",
             })
             continue
 
-        tmp_wav = None
         try:
-            tmp_wav = mp4_to_wav_16k(audio_path)
-            feats_df = smile.process_file(tmp_wav).reset_index(drop=True)
+            feats_df = smile.process_file(str(wav_path)).reset_index(drop=True)
 
             assert len(feats_df) == 1, (
-                f"Expected 1 feature row, got {len(feats_df)} for {audio_path.name}"
+                f"Expected 1 feature row, got {len(feats_df)} for {wav_path.name}"
             )
 
             feat_row = feats_df.iloc[0].to_dict()
 
         except Exception as e:
-            tqdm.write(f"  [WARN] failed: {audio_path.name} — {e}")
+            tqdm.write(f"  [WARN] failed: {wav_path.name} — {e}")
             failed_ids.append({
-                "dialogue_id":  int(row["dialogue_id"]),
-                "utterance_id": int(row["utterance_id"]),
+                "dialogue_id":  dia_id,
+                "utterance_id": utt_id,
                 "reason": str(e),
             })
             continue
 
-        finally:
-            if tmp_wav and os.path.exists(tmp_wav):
-                os.unlink(tmp_wav)
-
-        feat_row["dialogue_id"]  = int(row["dialogue_id"])
-        feat_row["utterance_id"] = int(row["utterance_id"])
+        feat_row["dialogue_id"]  = dia_id
+        feat_row["utterance_id"] = utt_id
         feat_row["label_idx"]    = int(row["label_idx"])
         rows.append(feat_row)
 

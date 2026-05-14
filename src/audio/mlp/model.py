@@ -1,5 +1,5 @@
 """
-MLP classifier on top of eGeMAPS feature vectors.
+MLP classifier on top of openSMILE feature vectors.
 """
 
 import sys
@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from config import NUM_CLASSES
 
 # Hyperparameters (imported by train.py)
-AUDIO_INPUT_DIM = 88  # eGeMAPSv02 Functionals
+AUDIO_INPUT_DIM = 88  # default for eGeMAPSv02; training passes the active feature dimension explicitly
 AUDIO_HIDDEN  = [256, 128]
 AUDIO_DROPOUT = 0.4
 AUDIO_LR      = 1e-3

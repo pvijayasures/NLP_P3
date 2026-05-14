@@ -30,6 +30,45 @@ def scaler_path(feature_set: str) -> Path:
     return MODELS_DIR / f"audio_{feature_set}_scaler.pkl"
 
 
+def load_feature_dataframe(
+    split: str,
+    feature_set: str = DEFAULT_FEATURE_SET,
+) -> pd.DataFrame:
+    parquet = FEATURES_DIR / f"{split}_{feature_set}.parquet"
+    df = pd.read_parquet(parquet)
+
+    missing_cols = ID_COLS.difference(df.columns)
+    if missing_cols:
+        raise ValueError(
+            f"Missing required columns in {parquet.name}: {sorted(missing_cols)}"
+        )
+
+    nan_mask = df.isna().any(axis=1)
+    dropped_rows = int(nan_mask.sum())
+    if dropped_rows:
+        print(
+            f"[WARN] Dropped {dropped_rows} row(s) with NaN values from "
+            f"{parquet.name} ({split}/{feature_set})."
+        )
+        df = df.loc[~nan_mask].reset_index(drop=True)
+
+    if df.empty:
+        raise ValueError(f"No valid rows left in {parquet.name} after NaN filtering.")
+
+    return df
+
+
+def load_feature_arrays(
+    split: str,
+    feature_set: str = DEFAULT_FEATURE_SET,
+) -> tuple[np.ndarray, np.ndarray]:
+    df = load_feature_dataframe(split=split, feature_set=feature_set)
+    feat_cols = [c for c in df.columns if c not in ID_COLS]
+    X = df[feat_cols].values.astype(np.float32)
+    y = df["label_idx"].values.astype(int)
+    return X, y
+
+
 class AudioFeaturesDataset(Dataset):
     def __init__(
         self,
@@ -42,8 +81,7 @@ class AudioFeaturesDataset(Dataset):
         feature_set: "egemaps" | "is10" | "emobase"
         scaler:      pre-fit scaler for dev/test; None triggers fit on train.
         """
-        parquet = FEATURES_DIR / f"{split}_{feature_set}.parquet"
-        df = pd.read_parquet(parquet)
+        df = load_feature_dataframe(split=split, feature_set=feature_set)
 
         self.labels = torch.tensor(df["label_idx"].values, dtype=torch.long)
 

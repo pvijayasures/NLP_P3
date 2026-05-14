@@ -220,3 +220,6 @@ __marimo__/
 /data
 /.idea
 .claude
+/outputs
+/models
+.DS_Store
