@@ -99,7 +99,7 @@ def run_epoch(model, loader, criterion, optimizer=None):
                 optimizer.step()
             all_preds.extend(logits.argmax(1).cpu().tolist())
             all_labels.extend(y.cpu().tolist())
-    wf1 = f1_score(all_labels, all_preds, average="weighted", zero_division=0)
+    wf1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
     return wf1
 
 
@@ -124,16 +124,16 @@ def train_model(
     train_loader = make_loader(X_train, y_train, shuffle=True)
     dev_loader   = make_loader(X_dev,   y_dev,   shuffle=False)
 
-    best_dev_wf1 = 0.0
+    best_dev_mf1 = 0.0
     epochs_no_improve = 0
 
     for epoch in range(1, max_epochs + 1):
         run_epoch(model, train_loader, criterion, optimizer)
-        dev_wf1 = run_epoch(model, dev_loader, criterion)
-        scheduler.step(dev_wf1)
+        dev_mf1 = run_epoch(model, dev_loader, criterion)
+        scheduler.step(dev_mf1)
 
-        if dev_wf1 > best_dev_wf1:
-            best_dev_wf1 = dev_wf1
+        if dev_mf1 > best_dev_mf1:
+            best_dev_mf1 = dev_mf1
             epochs_no_improve = 0
             if checkpoint is not None:
                 torch.save(model.state_dict(), checkpoint)
@@ -142,7 +142,7 @@ def train_model(
             if epochs_no_improve >= patience:
                 break
 
-    return best_dev_wf1
+    return best_dev_mf1
 
 
 def objective(trial, X_train, y_train, X_dev, y_dev) -> float:
@@ -178,7 +178,7 @@ def main():
         pickle.dump(scaler, f)
     print(f"Scaler saved → {scaler_file.name}")
 
-    print(f"\nBayesian search ({N_TRIALS} trials, dev weighted-F1)...")
+    print(f"\nBayesian search ({N_TRIALS} trials, dev macro-F1)...")
     study = optuna.create_study(direction="maximize")
     study.optimize(
         lambda trial: objective(trial, X_train, y_train, X_dev, y_dev),
@@ -186,24 +186,24 @@ def main():
         show_progress_bar=True,
     )
     best = study.best_params
-    print(f"Best dev wF1 : {study.best_value:.4f}")
+    print(f"Best dev mF1 : {study.best_value:.4f}")
     print(f"Best params  : {best}")
 
     hparams_file = CHECKPOINTS_DIR / f"{MODEL_TAG}_hparams.json"
     with open(hparams_file, "w") as f:
-        json.dump({**best, "dev_wf1": round(study.best_value, 4)}, f, indent=2)
+        json.dump({**best, "dev_mf1": round(study.best_value, 4)}, f, indent=2)
     print(f"Hparams saved → {hparams_file.name}")
 
     checkpoint = CHECKPOINTS_DIR / f"{MODEL_TAG}_best.pt"
     print(f"\nFinal training (max {FINAL_EPOCHS} epochs, patience={FINAL_PATIENCE})...")
-    best_dev_wf1 = train_model(
+    best_dev_mf1 = train_model(
         X_train, y_train, X_dev, y_dev,
         best["hidden_1"], best["hidden_2"],
         best["dropout"], best["lr"], best["focal_gamma"],
         max_epochs=FINAL_EPOCHS, patience=FINAL_PATIENCE,
         checkpoint=checkpoint,
     )
-    print(f"Best dev wF1 : {best_dev_wf1:.4f}")
+    print(f"Best dev mF1 : {best_dev_mf1:.4f}")
     print(f"Checkpoint   → {checkpoint.name}")
 
     model = AudioMLP(
@@ -240,7 +240,7 @@ def main():
         if p.exists():
             m = json.loads(p.read_text())
             marker = " ←" if tag == MODEL_TAG else ""
-            print(f"  {tag:25s}  wF1 {m['weighted_f1']:.4f}{marker}")
+            print(f"  {tag:25s}  mF1 {m['macro_f1']:.4f}{marker}")
 
 
 if __name__ == "__main__":

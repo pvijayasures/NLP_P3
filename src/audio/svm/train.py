@@ -67,7 +67,7 @@ def objective(trial, X_train, y_train, X_dev, y_dev) -> float:
     svc.fit(X_train, y_train)
     svm = CalibratedClassifierCV(svc, cv="prefit", method="sigmoid")
     svm.fit(X_dev, y_dev)
-    return f1_score(y_dev, svm.predict(X_dev), average="weighted", zero_division=0)
+    return f1_score(y_dev, svm.predict(X_dev), average="macro", zero_division=0)
 
 
 def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
@@ -91,7 +91,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
         pickle.dump(scaler, f)
     print("Scaler saved.")
 
-    print(f"Bayesian search ({N_TRIALS} trials, dev weighted-F1)...")
+    print(f"Bayesian search ({N_TRIALS} trials, dev macro-F1)...")
     study = optuna.create_study(direction="maximize")
     study.optimize(
         lambda trial: objective(trial, X_train, y_train, X_dev, y_dev),
@@ -99,11 +99,11 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
         show_progress_bar=True,
     )
     best = study.best_params
-    print(f"Best dev wF1 : {study.best_value:.4f}")
+    print(f"Best dev mF1 : {study.best_value:.4f}")
     print(f"Best params  : {best}")
 
     with open(CHECKPOINTS_DIR / f"{model_tag}_hparams.json", "w") as f:
-        json.dump({**best, "dev_wf1": round(study.best_value, 4)}, f, indent=2)
+        json.dump({**best, "dev_mf1": round(study.best_value, 4)}, f, indent=2)
 
     print("Training final model with best hyperparameters...")
     svc = LinearSVC(
@@ -137,13 +137,13 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
     np.save(PREDICTIONS_DIR / f"{model_tag}_softmax_test.npy", softmax)
     print(f"Softmax saved → shape {softmax.shape}")
 
-    print("\nComparison across feature sets (SVM, wF1):")
+    print("\nComparison across feature sets (SVM, mF1):")
     for key in FEATURE_SETS:
         p = METRICS_DIR / f"audio_svm_{key}.json"
         if p.exists():
             m = json.loads(p.read_text())
             marker = " ←" if key == feature_set else ""
-            print(f"  {key:10s}  wF1 {m['weighted_f1']:.4f}{marker}")
+            print(f"  {key:10s}  wF1 {m['macro_f1']:.4f}{marker}")
 
 
 if __name__ == "__main__":
