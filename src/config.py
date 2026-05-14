@@ -6,14 +6,17 @@ ROOT = Path(__file__).parent.parent
 RAW_DIR       = ROOT / "data" / "raw"
 PROCESSED_DIR = ROOT / "data" / "processed"
 FEATURES_DIR  = ROOT / "data" / "features"
-MODELS_DIR    = ROOT / "models"
-OUTPUTS_DIR   = ROOT / "outputs"
+MODELS_DIR       = ROOT / "models"
+OUTPUTS_DIR      = ROOT / "outputs"
+CHECKPOINTS_DIR  = OUTPUTS_DIR / "checkpoints"
+METRICS_DIR      = OUTPUTS_DIR / "metrics"
+PREDICTIONS_DIR  = OUTPUTS_DIR / "predictions"
 
 # Audio-Verzeichnisse (MELD-Struktur)
 AUDIO_DIRS = {
-    "train": RAW_DIR / "audio" / "train_splits",
-    "dev":   RAW_DIR / "audio" / "dev_splits",
-    "test":  RAW_DIR / "audio" / "output_repeated_splits",
+    "train": RAW_DIR / "audio" / "train",
+    "dev":   RAW_DIR / "audio" / "dev",
+    "test":  RAW_DIR / "audio" / "test",
 }
 
 # CSV-Dateien
@@ -33,17 +36,23 @@ LABEL2IDX = {label: i for i, label in enumerate(EMOTION_LABELS)}
 IDX2LABEL = {i: label for label, i in LABEL2IDX.items()}
 NUM_CLASSES = len(EMOTION_LABELS)
 
-# Sentiment-Schwellenwert für Surprise-Split (VADER compound score)
-SURPRISE_SENTIMENT_THRESHOLD = 0.05  # >= 0.05 → positiv, sonst negativ
-
 # RoBERTa
 ROBERTA_MODEL = "roberta-base"
 ROBERTA_MAX_LEN = 128
 ROBERTA_BATCH_SIZE = 64
 
-# eGeMAPS
-OPENSMILE_FEATURE_SET = "eGeMAPSv02"
-OPENSMILE_FEATURE_LEVEL = "Functionals"
+# openSMILE feature sets available for extraction and training
+# key → (FeatureSet name, FeatureLevel name, parquet suffix)
+FEATURE_SETS: dict[str, tuple[str, str]] = {
+    "egemaps": ("eGeMAPSv02",    "Functionals"),  # 88 features
+    "is10":    ("IS10_paraling", "Functionals"),  # 1582 features — closest to MELD baseline
+    "emobase": ("emobase",       "Functionals"),  # 988 features — emotion-specific
+}
+DEFAULT_FEATURE_SET = "egemaps"
+
+# Legacy aliases kept for existing scripts
+OPENSMILE_FEATURE_SET   = FEATURE_SETS[DEFAULT_FEATURE_SET][0]
+OPENSMILE_FEATURE_LEVEL = FEATURE_SETS[DEFAULT_FEATURE_SET][1]
 
 # Training
 RANDOM_SEED = 42

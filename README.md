@@ -5,12 +5,12 @@
 Wir untersuchen, ob Stimmmerkmale oder Sprachinhalt besser geeignet sind, um Emotionen zu erkennen. Dafür trainieren wir drei Modelle (`Audio2Emotion`, `Text2Emotion`, Kombination aus beiden) und vergleichen den `weighted F1`-Score. Mit dem kombinierten Modell prüfen wir, ob Audio- und Textmodell komplementäre Informationen lernen und zusammen besser performen als einzeln.
 
 ### Umsetzung
-- **Modell 1 (Audio -> Emotion):** Pretrained Audio-Modelle (z. B. `facebook/wav2vec2-base` oder `facebook/hubert-large`) als Feature-Extraktor mit Klassifikations-Head.
-- **Modell 2 (Text -> Emotion):** Nutzung der MELD-Transkripte zur rein semantischen Klassifikation (z. B. `roberta-base` oder `j-hartmann/emotion-english-distilroberta-base`).
-- **Modell 3 (Multimodal):** Kombination der Softmax-Outputs von Audio- und Textmodell.
+- **Modell 1 (Audio → Emotion):** openSMILE eGeMAPSv02 Funktionals (88 Features) als Audiorepräsentation, normalisiert mit `StandardScaler`, klassifiziert mit `Logistic Regression`.
+- **Modell 2 (Text → Emotion):** `roberta-base` direkt auf den MELD-Transkripten feinabgestimmt (End-to-End), linearer Klassifikations-Head.
+- **Modell 3 (Multimodal):** eGeMAPS-Features und RoBERTa-CLS-Embedding (aus dem feinabgestimmten Modell) konkateniert → 2-Layer MLP.
 
 ### Datenquelle (MELD)
-Wir verwenden den MELD-Datensatz (Friends-Dialoge, ca. 13k Utterances, 7 Emotionsklassen: `anger`, `disgust`, `sadness`, `joy`, `neutral`, `surprise`, `fear`).
+Wir verwenden den MELD-Datensatz (Friends-Dialoge, ca. 13k Utterances). Die `surprise`-Klasse wird anhand der MELD-Sentiment-Spalte in zwei Klassen aufgeteilt, sodass **8 Emotionsklassen** entstehen: `anger`, `disgust`, `sadness`, `joy`, `neutral`, `fear`, `surprise_positive`, `surprise_negative`.
 
 - Download (in diesem Projekt genutzt): https://huggingface.co/datasets/declare-lab/MELD
 - Projektseite: https://affective-meld.github.io
@@ -19,7 +19,8 @@ Wir verwenden den MELD-Datensatz (Friends-Dialoge, ca. 13k Utterances, 7 Emotion
 
 ### 1) Prerequisites
 - Python `3.10` (recommended)
-- `ffmpeg` installed (needed for audio cells that read `.mp4` files)
+- `ffmpeg` installed (needed for audio processing of `.mp4` files)
+- `openSMILE` installed via `pip install opensmile`
 
 ### 2) Install dependencies
 From the project root:
@@ -47,11 +48,19 @@ tar -xvzf test.tar.gz
 mv train_sent_emo.csv ../raw/train_sent_emo.csv
 mv dev_sent_emo.csv ../raw/dev_sent_emo.csv
 mv test_sent_emo.csv ../raw/test_sent_emo.csv
-mv train_splits ../raw/audio/train_splits
-mv dev_splits_complete ../raw/audio/dev_splits
-mv output_repeated_splits_test ../raw/audio/output_repeated_splits
+mv train_splits ../raw/audio/train
+mv dev_splits_complete ../raw/audio/dev
+mv output_repeated_splits_test ../raw/audio/test
 cd ..
 cd ..
+```
+
+> **Note:** The test split contains a known filename bug — all files are prefixed with `final_videos_test` (e.g. `final_videos_testdia1_utt0.mp4` instead of `dia1_utt0.mp4`). Fix with:
+
+```bash
+for f in data/raw/audio/test/final_videos_test*.mp4; do
+    mv "$f" "data/raw/audio/test/$(basename $f | sed 's/final_videos_test//')"
+done
 ```
 
 Windows (PowerShell):
@@ -68,18 +77,26 @@ tar -xvzf test.tar.gz
 Move-Item train_sent_emo.csv ../raw/train_sent_emo.csv
 Move-Item dev_sent_emo.csv ../raw/dev_sent_emo.csv
 Move-Item test_sent_emo.csv ../raw/test_sent_emo.csv
-Move-Item train_splits ../raw/audio/train_splits
-Move-Item dev_splits_complete ../raw/audio/dev_splits
-Move-Item output_repeated_splits_test ../raw/audio/output_repeated_splits
+Move-Item train_splits ../raw/audio/train
+Move-Item dev_splits_complete ../raw/audio/dev
+Move-Item output_repeated_splits_test ../raw/audio/test
 Set-Location ..
 Set-Location ..
+```
+
+> **Note (Windows):** The test split contains a known filename bug — fix with:
+
+```powershell
+Get-ChildItem "data/raw/audio/test/final_videos_test*.mp4" | ForEach-Object {
+    Rename-Item $_.FullName ($_.Name -replace "^final_videos_test", "")
+}
 ```
 
 ### 4) Quick path check (optional)
 
 ```bash
 ls data/raw/train_sent_emo.csv data/raw/dev_sent_emo.csv data/raw/test_sent_emo.csv
-ls data/raw/audio/train_splits data/raw/audio/dev_splits data/raw/audio/output_repeated_splits
+ls data/raw/audio/train data/raw/audio/dev data/raw/audio/test
 ```
 
 ## Citation

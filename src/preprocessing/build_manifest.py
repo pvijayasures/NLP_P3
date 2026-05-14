@@ -6,10 +6,14 @@ Surprise wird anhand der vorhandenen MELD Sentiment-Spalte aufgeteilt:
 Kein externes Sentiment-Tool nötig — kein Leakage-Risiko.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import pandas as pd
 import ftfy
 from config import (
-    CSV_FILES, AUDIO_DIRS, PROCESSED_DIR, LABEL2IDX
+    ROOT, CSV_FILES, AUDIO_DIRS, PROCESSED_DIR, LABEL2IDX
 )
 
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -18,8 +22,8 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 def normalize_text(value: str) -> str:
     return (
         ftfy.fix_text(value)
-        .replace("", "'")
-        .replace("", "-")
+        .replace("\u2019", "'")
+        .replace("\u2013", "-")
     )
 
 
@@ -47,6 +51,7 @@ def build_manifest(split: str) -> pd.DataFrame:
 
         audio_path = audio_dir / f"dia{dia_id}_utt{utt_id}.mp4"
         if not audio_path.exists():
+            print(f"\n  [WARN] missing: {audio_path}")
             missing_audio += 1
             continue
 
@@ -57,7 +62,7 @@ def build_manifest(split: str) -> pd.DataFrame:
             "utterance_id": utt_id,
             "speaker":      speaker,
             "text":         text,
-            "audio_path":   str(audio_path),
+            "audio_path":   str(audio_path.relative_to(ROOT)),
             "emotion":      label,
             "label_idx":    LABEL2IDX[label],
         })
@@ -66,7 +71,12 @@ def build_manifest(split: str) -> pd.DataFrame:
     out_path = PROCESSED_DIR / f"manifest_{split}.csv"
     manifest.to_csv(out_path, index=False)
 
-    print(f"[{split}] {len(manifest)} Utterances | {missing_audio} Audio-Dateien fehlen")
+    total = len(manifest) + missing_audio
+    print(f"\n[{split}] {len(manifest)}/{total} Utterances OK | {missing_audio} missing audio files")
+    if missing_audio > 0:
+        print(f"  → Check data/raw/audio/{split}/ — expected naming: dia{{id}}_utt{{id}}.mp4")
+        if split == "test":
+            print(f"  → Did you run the 'final_videos_test' rename fix?")
     print(manifest["emotion"].value_counts().to_string())
     print()
     return manifest
