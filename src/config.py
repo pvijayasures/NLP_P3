@@ -2,9 +2,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
-# Rohdaten
+# ---------------------------------------------------------------------------
+# Directories
+# ---------------------------------------------------------------------------
 RAW_DIR       = ROOT / "data" / "raw"
-WAV_DIR       = ROOT / "data" / "wav_16k"   # pre-converted 16kHz mono WAVs (one-time, reusable)
+WAV_DIR       = ROOT / "data" / "wav_16k"
 PROCESSED_DIR = ROOT / "data" / "processed"
 FEATURES_DIR  = ROOT / "data" / "features"
 MODELS_DIR       = ROOT / "models"
@@ -13,46 +15,64 @@ CHECKPOINTS_DIR  = OUTPUTS_DIR / "checkpoints"
 METRICS_DIR      = OUTPUTS_DIR / "metrics"
 PREDICTIONS_DIR  = OUTPUTS_DIR / "predictions"
 
-# Audio-Verzeichnisse (MELD-Struktur)
 AUDIO_DIRS = {
     "train": RAW_DIR / "audio" / "train",
     "dev":   RAW_DIR / "audio" / "dev",
     "test":  RAW_DIR / "audio" / "test",
 }
-
-# CSV-Dateien
 CSV_FILES = {
     "train": RAW_DIR / "train_sent_emo.csv",
     "dev":   RAW_DIR / "dev_sent_emo.csv",
     "test":  RAW_DIR / "test_sent_emo.csv",
 }
 
-# 8 Klassen (surprise aufgeteilt)
+# ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
 EMOTION_LABELS = [
     "neutral", "joy", "anger",
     "sadness", "disgust", "fear",
     "surprise_positive", "surprise_negative",
 ]
 LABEL2IDX = {label: i for i, label in enumerate(EMOTION_LABELS)}
-IDX2LABEL = {i: label for label, i in LABEL2IDX.items()}
+IDX2LABEL  = {i: label for label, i in LABEL2IDX.items()}
 NUM_CLASSES = len(EMOTION_LABELS)
 
-# RoBERTa
-ROBERTA_MODEL = "roberta-base"
-ROBERTA_MAX_LEN = 128
-ROBERTA_BATCH_SIZE = 64
+RANDOM_SEED = 42
 
-# openSMILE feature sets available for extraction and training
-# key → (FeatureSet name, FeatureLevel name, parquet suffix)
+# ---------------------------------------------------------------------------
+# Audio — feature sets & model keys
+# ---------------------------------------------------------------------------
 FEATURE_SETS: dict[str, tuple[str, str]] = {
-    "egemaps": ("eGeMAPSv02",    "Functionals"),  # 88 features
-    "is10":    ("IS10",          "Functionals"),  # 1582 features — closest to MELD baseline
-    "emobase": ("emobase",       "Functionals"),  # 988 features — emotion-specific
+    "egemaps": ("eGeMAPSv02", "Functionals"),  # 88 dims
+    "is10":    ("IS10",       "Functionals"),  # 1582 dims
+    "emobase": ("emobase",    "Functionals"),  # 988 dims
 }
 DEFAULT_FEATURE_SET = "is10"
-DEFAULT_CLASSIFIER  = "lr"
+AUDIO_MODEL_KEYS    = ("lr", "svm", "mlp")
 
-# Best hyperparameters per feature set (found by Optuna, metric = dev macro F1)
+# ---------------------------------------------------------------------------
+# Text — model keys & config
+# ---------------------------------------------------------------------------
+TEXT_MODEL_KEYS = ("roberta",)
+
+ROBERTA_MODEL      = "roberta-base"
+ROBERTA_MAX_LEN    = 128
+ROBERTA_BATCH_SIZE = 64
+
+# ---------------------------------------------------------------------------
+# Multimodal — fusion variants
+# ---------------------------------------------------------------------------
+MULTIMODAL_MODEL_KEYS = ("late_fusion",)
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+DEFAULT_CLASSIFIER = "lr"
+
+# ---------------------------------------------------------------------------
+# Best hyperparameters per feature set (found by Optuna, metric: dev macro-F1)
+# ---------------------------------------------------------------------------
 LR_BEST_PARAMS: dict[str, dict] = {
     "is10": {
         "C": 0.0012355217597810556, "solver": "saga", "max_iter": 3000,
@@ -104,48 +124,46 @@ MLP_BEST_PARAMS: dict[str, dict] = {
     },
 }
 
-# Training
-RANDOM_SEED = 42
+# Populated after first text training run
+ROBERTA_BEST_PARAMS: dict[str, dict] = {}
 
+# Populated after first multimodal training run
+LATE_FUSION_BEST_PARAMS: dict[str, dict] = {}
 
-# -----------------------------------------------------------------------------
-# Central artifact path helpers
-# -----------------------------------------------------------------------------
-MODEL_KEYS = ("lr", "svm", "mlp")
+# ---------------------------------------------------------------------------
+# Tag factories  →  canonical string used in all file names
+#   audio:      audio_{model_key}_{feature_set}   e.g. audio_lr_is10
+#   text:       text_{model_key}                  e.g. text_roberta
+#   multimodal: multimodal_{variant}              e.g. multimodal_late_fusion
+# ---------------------------------------------------------------------------
 
-
-def get_model_tag(model_key: str, feature_set: str) -> str:
-    """Return canonical model tag, e.g. 'audio_lr_is10'."""
+def audio_tag(model_key: str, feature_set: str) -> str:
     return f"audio_{model_key}_{feature_set}"
 
+def text_tag(model_key: str) -> str:
+    return f"text_{model_key}"
 
-def get_model_path(model_key: str, feature_set: str):
-    """Return checkpoint path for trained model weights/object."""
-    model_tag = get_model_tag(model_key, feature_set)
-    if model_key == "mlp":
-        return CHECKPOINTS_DIR / f"{model_tag}_best.pt"
-    return CHECKPOINTS_DIR / f"{model_tag}_model.pkl"
+def multimodal_tag(variant: str) -> str:
+    return f"multimodal_{variant}"
 
+# ---------------------------------------------------------------------------
+# Generic artifact path builders  (accept any tag from the factories above)
+# ---------------------------------------------------------------------------
 
-def get_scaler_path(model_key: str, feature_set: str):
-    """Return checkpoint path for fitted scaler."""
-    model_tag = get_model_tag(model_key, feature_set)
-    return CHECKPOINTS_DIR / f"{model_tag}_scaler.pkl"
+def get_scaler_path(tag: str) -> Path:
+    return CHECKPOINTS_DIR / f"{tag}_scaler.pkl"
 
+def get_hparams_path(tag: str) -> Path:
+    return CHECKPOINTS_DIR / f"{tag}_hparams.json"
 
-def get_hparams_path(model_key: str, feature_set: str):
-    """Return checkpoint path for best hyperparameters JSON."""
-    model_tag = get_model_tag(model_key, feature_set)
-    return CHECKPOINTS_DIR / f"{model_tag}_hparams.json"
+def get_model_path(tag: str) -> Path:
+    """Returns .pt for PyTorch models (mlp, roberta, multimodal), .pkl for sklearn."""
+    if any(k in tag for k in ("mlp", "roberta", "multimodal")):
+        return CHECKPOINTS_DIR / f"{tag}_best.pt"
+    return CHECKPOINTS_DIR / f"{tag}_model.pkl"
 
+def get_metrics_path(tag: str) -> Path:
+    return METRICS_DIR / f"{tag}.json"
 
-def get_metrics_path(model_key: str, feature_set: str):
-    """Return metrics JSON path for one model/feature-set run."""
-    model_tag = get_model_tag(model_key, feature_set)
-    return METRICS_DIR / f"{model_tag}.json"
-
-
-def get_prediction_path(model_key: str, feature_set: str, split: str = "test"):
-    """Return prediction softmax npy path for a split (default: test)."""
-    model_tag = get_model_tag(model_key, feature_set)
-    return PREDICTIONS_DIR / f"{model_tag}_softmax_{split}.npy"
+def get_prediction_path(tag: str, split: str = "test") -> Path:
+    return PREDICTIONS_DIR / f"{tag}_softmax_{split}.npy"

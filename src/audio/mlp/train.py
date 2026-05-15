@@ -52,7 +52,7 @@ from config import (
     NUM_CLASSES,
     FEATURE_SETS, DEFAULT_FEATURE_SET,
     MLP_BEST_PARAMS,
-    get_model_tag, get_model_path, get_scaler_path,
+    audio_tag, get_model_path, get_scaler_path,
     get_hparams_path, get_metrics_path, get_prediction_path,
 )
 from audio.dataset import load_feature_arrays
@@ -167,12 +167,11 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True):
     if feature_set not in FEATURE_SETS:
         raise ValueError(f"Unknown feature set '{feature_set}'. Valid: {list(FEATURE_SETS)}")
 
-    model_key = "mlp"
-    model_tag = get_model_tag(model_key, feature_set)
-    scaler_file = get_scaler_path(model_key, feature_set)
-    hparams_file = get_hparams_path(model_key, feature_set)
-    checkpoint = get_model_path(model_key, feature_set)
-    pred_file = get_prediction_path(model_key, feature_set, split="test")
+    tag          = audio_tag("mlp", feature_set)
+    scaler_file  = get_scaler_path(tag)
+    hparams_file = get_hparams_path(tag)
+    checkpoint   = get_model_path(tag)
+    pred_file    = get_prediction_path(tag, split="test")
     fs_name   = FEATURE_SETS[feature_set][0]
 
     print(f"Device      : {DEVICE}")
@@ -252,7 +251,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True):
     evaluate_and_save(
         y_true=np.array(all_labels),
         y_pred=np.array(all_preds),
-        model_name=model_tag,
+        model_name=tag,
     )
 
     softmax = torch.cat(all_probs, dim=0).numpy().astype(np.float32)
@@ -261,7 +260,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True):
 
     print(f"\nComparison across feature sets (MLP, mF1):")
     for fs in FEATURE_SETS:
-        p = get_metrics_path(model_key, fs)
+        p = get_metrics_path(audio_tag("mlp", fs))
         if p.exists():
             m = json.loads(p.read_text())
             marker = " ←" if fs == feature_set else ""

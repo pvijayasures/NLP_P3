@@ -48,7 +48,7 @@ from config import (
     FEATURE_SETS, DEFAULT_FEATURE_SET,
     EMOTION_LABELS, NUM_CLASSES,
     SVM_BEST_PARAMS,
-    get_model_tag, get_model_path, get_scaler_path,
+    audio_tag, get_model_path, get_scaler_path,
     get_hparams_path, get_metrics_path, get_prediction_path,
 )
 from audio.dataset import load_feature_arrays
@@ -78,12 +78,11 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
     if feature_set not in FEATURE_SETS:
         raise ValueError(f"Unknown feature set '{feature_set}'. Valid: {list(FEATURE_SETS)}")
 
-    model_key = "svm"
-    model_tag = get_model_tag(model_key, feature_set)
-    scaler_path = get_scaler_path(model_key, feature_set)
-    hparams_path = get_hparams_path(model_key, feature_set)
-    model_path = get_model_path(model_key, feature_set)
-    pred_path = get_prediction_path(model_key, feature_set, split="test")
+    tag          = audio_tag("svm", feature_set)
+    scaler_path  = get_scaler_path(tag)
+    hparams_path = get_hparams_path(tag)
+    model_path   = get_model_path(tag)
+    pred_path    = get_prediction_path(tag, split="test")
     print(f"Feature set : {feature_set} ({FEATURE_SETS[feature_set][0]})")
 
     print("Loading features...")
@@ -151,7 +150,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
 
     print("--- Test set ---")
     y_test_pred = svm.predict(X_test)
-    evaluate_and_save(y_true=y_test, y_pred=y_test_pred, model_name=model_tag)
+    evaluate_and_save(y_true=y_test, y_pred=y_test_pred, model_name=tag)
 
     proba = svm.predict_proba(X_test)
     softmax = np.zeros((len(y_test), NUM_CLASSES), dtype=np.float32)
@@ -162,7 +161,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
 
     print("\nComparison across feature sets (SVM, mF1):")
     for key in FEATURE_SETS:
-        p = get_metrics_path(model_key, key)
+        p = get_metrics_path(audio_tag("svm", key))
         if p.exists():
             m = json.loads(p.read_text())
             marker = " ←" if key == feature_set else ""
