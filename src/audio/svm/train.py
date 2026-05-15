@@ -46,8 +46,10 @@ from sklearn.metrics import classification_report, f1_score
 from config import (
     CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR,
     FEATURE_SETS, DEFAULT_FEATURE_SET,
-    EMOTION_LABELS, NUM_CLASSES, LABEL2IDX,
+    EMOTION_LABELS, NUM_CLASSES,
     SVM_BEST_PARAMS,
+    get_model_tag, get_model_path, get_scaler_path,
+    get_hparams_path, get_metrics_path, get_prediction_path,
 )
 from audio.dataset import load_feature_arrays
 from evaluate import evaluate_and_save
@@ -76,7 +78,12 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
     if feature_set not in FEATURE_SETS:
         raise ValueError(f"Unknown feature set '{feature_set}'. Valid: {list(FEATURE_SETS)}")
 
-    model_tag = f"audio_svm_{feature_set}"
+    model_key = "svm"
+    model_tag = get_model_tag(model_key, feature_set)
+    scaler_path = get_scaler_path(model_key, feature_set)
+    hparams_path = get_hparams_path(model_key, feature_set)
+    model_path = get_model_path(model_key, feature_set)
+    pred_path = get_prediction_path(model_key, feature_set, split="test")
     print(f"Feature set : {feature_set} ({FEATURE_SETS[feature_set][0]})")
 
     print("Loading features...")
@@ -89,7 +96,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
     X_dev   = scaler.transform(X_dev)
     X_test  = scaler.transform(X_test)
 
-    with open(CHECKPOINTS_DIR / f"{model_tag}_scaler.pkl", "wb") as f:
+    with open(scaler_path, "wb") as f:
         pickle.dump(scaler, f)
     print("Scaler saved.")
 
@@ -105,7 +112,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
         best = study.best_params
         print(f"Best dev mF1 : {study.best_value:.4f}")
         print(f"Best params  : {best}")
-        with open(CHECKPOINTS_DIR / f"{model_tag}_hparams.json", "w") as f:
+        with open(hparams_path, "w") as f:
             json.dump({**best, "dev_mf1": round(study.best_value, 4)}, f, indent=2)
     else:
         if feature_set not in SVM_BEST_PARAMS:
@@ -114,6 +121,10 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
                 "Run without --no-optimize first."
             )
         best = {k: v for k, v in SVM_BEST_PARAMS[feature_set].items() if k != "dev_mf1"}
+        if not hparams_path.exists():
+            with open(hparams_path, "w") as f:
+                json.dump({**best, "dev_mf1": SVM_BEST_PARAMS[feature_set].get("dev_mf1")}, f, indent=2)
+            print(f"Hparams missing -> created from config: {hparams_path.name}")
         print(f"Using saved params from config: {best}")
         print(f"(dev mF1 when found: {SVM_BEST_PARAMS[feature_set]['dev_mf1']})")
 
@@ -130,7 +141,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
         f"Expected {NUM_CLASSES} classes after calibration, got {len(svm.classes_)}"
     )
 
-    with open(CHECKPOINTS_DIR / f"{model_tag}_model.pkl", "wb") as f:
+    with open(model_path, "wb") as f:
         pickle.dump(svm, f)
     print("Model saved.")
 
@@ -146,12 +157,12 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
     softmax = np.zeros((len(y_test), NUM_CLASSES), dtype=np.float32)
     for col_idx, class_idx in enumerate(svm.classes_):
         softmax[:, class_idx] = proba[:, col_idx]
-    np.save(PREDICTIONS_DIR / f"{model_tag}_softmax_test.npy", softmax)
+    np.save(pred_path, softmax)
     print(f"Softmax saved → shape {softmax.shape}")
 
     print("\nComparison across feature sets (SVM, mF1):")
     for key in FEATURE_SETS:
-        p = METRICS_DIR / f"audio_svm_{key}.json"
+        p = get_metrics_path(model_key, key)
         if p.exists():
             m = json.loads(p.read_text())
             marker = " ←" if key == feature_set else ""

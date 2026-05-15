@@ -106,3 +106,46 @@ MLP_BEST_PARAMS: dict[str, dict] = {
 
 # Training
 RANDOM_SEED = 42
+
+
+# -----------------------------------------------------------------------------
+# Central artifact path helpers
+# -----------------------------------------------------------------------------
+MODEL_KEYS = ("lr", "svm", "mlp")
+
+
+def get_model_tag(model_key: str, feature_set: str) -> str:
+    """Return canonical model tag, e.g. 'audio_lr_is10'."""
+    return f"audio_{model_key}_{feature_set}"
+
+
+def get_model_path(model_key: str, feature_set: str):
+    """Return checkpoint path for trained model weights/object."""
+    model_tag = get_model_tag(model_key, feature_set)
+    if model_key == "mlp":
+        return CHECKPOINTS_DIR / f"{model_tag}_best.pt"
+    return CHECKPOINTS_DIR / f"{model_tag}_model.pkl"
+
+
+def get_scaler_path(model_key: str, feature_set: str):
+    """Return checkpoint path for fitted scaler."""
+    model_tag = get_model_tag(model_key, feature_set)
+    return CHECKPOINTS_DIR / f"{model_tag}_scaler.pkl"
+
+
+def get_hparams_path(model_key: str, feature_set: str):
+    """Return checkpoint path for best hyperparameters JSON."""
+    model_tag = get_model_tag(model_key, feature_set)
+    return CHECKPOINTS_DIR / f"{model_tag}_hparams.json"
+
+
+def get_metrics_path(model_key: str, feature_set: str):
+    """Return metrics JSON path for one model/feature-set run."""
+    model_tag = get_model_tag(model_key, feature_set)
+    return METRICS_DIR / f"{model_tag}.json"
+
+
+def get_prediction_path(model_key: str, feature_set: str, split: str = "test"):
+    """Return prediction softmax npy path for a split (default: test)."""
+    model_tag = get_model_tag(model_key, feature_set)
+    return PREDICTIONS_DIR / f"{model_tag}_softmax_{split}.npy"

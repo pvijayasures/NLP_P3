@@ -40,7 +40,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import numpy as np
 import optuna
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
@@ -50,9 +49,11 @@ from sklearn.metrics import f1_score
 from config import (
     CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR,
     RANDOM_SEED,
-    NUM_CLASSES, LABEL2IDX,
+    NUM_CLASSES,
     FEATURE_SETS, DEFAULT_FEATURE_SET,
     MLP_BEST_PARAMS,
+    get_model_tag, get_model_path, get_scaler_path,
+    get_hparams_path, get_metrics_path, get_prediction_path,
 )
 from audio.dataset import load_feature_arrays
 from audio.mlp.model import AudioMLP, FocalLoss
@@ -166,7 +167,12 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True):
     if feature_set not in FEATURE_SETS:
         raise ValueError(f"Unknown feature set '{feature_set}'. Valid: {list(FEATURE_SETS)}")
 
-    model_tag = f"audio_mlp_{feature_set}"
+    model_key = "mlp"
+    model_tag = get_model_tag(model_key, feature_set)
+    scaler_file = get_scaler_path(model_key, feature_set)
+    hparams_file = get_hparams_path(model_key, feature_set)
+    checkpoint = get_model_path(model_key, feature_set)
+    pred_file = get_prediction_path(model_key, feature_set, split="test")
     fs_name   = FEATURE_SETS[feature_set][0]
 
     print(f"Device      : {DEVICE}")
@@ -182,7 +188,6 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True):
     X_dev   = scaler.transform(X_dev)
     X_test  = scaler.transform(X_test)
 
-    scaler_file = CHECKPOINTS_DIR / f"{model_tag}_scaler.pkl"
     with open(scaler_file, "wb") as f:
         pickle.dump(scaler, f)
     print(f"Scaler saved → {scaler_file.name}")
@@ -199,7 +204,6 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True):
         best = study.best_params
         print(f"Best dev mF1 : {study.best_value:.4f}")
         print(f"Best params  : {best}")
-        hparams_file = CHECKPOINTS_DIR / f"{model_tag}_hparams.json"
         with open(hparams_file, "w") as f:
             json.dump({**best, "dev_mf1": round(study.best_value, 4)}, f, indent=2)
         print(f"Hparams saved → {hparams_file.name}")
@@ -210,10 +214,13 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True):
                 "Run without --no-optimize first."
             )
         best = {k: v for k, v in MLP_BEST_PARAMS[feature_set].items() if k != "dev_mf1"}
+        if not hparams_file.exists():
+            with open(hparams_file, "w") as f:
+                json.dump({**best, "dev_mf1": MLP_BEST_PARAMS[feature_set].get("dev_mf1")}, f, indent=2)
+            print(f"Hparams missing -> created from config: {hparams_file.name}")
         print(f"\nUsing saved params from config: {best}")
         print(f"(dev mF1 when found: {MLP_BEST_PARAMS[feature_set]['dev_mf1']})")
 
-    checkpoint = CHECKPOINTS_DIR / f"{model_tag}_best.pt"
     print(f"\nFinal training (max {FINAL_EPOCHS} epochs, patience={FINAL_PATIENCE})...")
     best_dev_mf1 = train_model(
         X_train, y_train, X_dev, y_dev,
@@ -249,13 +256,12 @@ def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True):
     )
 
     softmax = torch.cat(all_probs, dim=0).numpy().astype(np.float32)
-    pred_file = PREDICTIONS_DIR / f"{model_tag}_softmax_test.npy"
     np.save(pred_file, softmax)
     print(f"Softmax saved → {pred_file.name}  shape {softmax.shape}")
 
     print(f"\nComparison across feature sets (MLP, mF1):")
     for fs in FEATURE_SETS:
-        p = METRICS_DIR / f"audio_mlp_{fs}.json"
+        p = get_metrics_path(model_key, fs)
         if p.exists():
             m = json.loads(p.read_text())
             marker = " ←" if fs == feature_set else ""
