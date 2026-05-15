@@ -1,8 +1,8 @@
 """
-Optimised Audio2Emotion MLP on eGeMAPS features.
+Optimised Audio2Emotion MLP — supports egemaps, is10, emobase feature sets.
 
 CHANGES FROM BASELINE:
-- StandardScaler on eGeMAPS features (fit on train only)
+- StandardScaler fit on train only (no leakage)
 - Configurable architecture searched by optuna [128, 64] default
 - Dropout searched by optuna (0.3–0.6)
 - Early stopping with patience=10 on dev weighted F1
@@ -18,14 +18,16 @@ SEARCH SPACE (optuna):
   focal_gamma: float [1.0, 3.0]
 
 Usage:
-  python -m src.audio.mlp.train
+  python -m src.audio.mlp.train              # egemaps (default)
+  python -m src.audio.mlp.train is10
+  python -m src.audio.mlp.train emobase
 
-Outputs:
-  outputs/checkpoints/audio_mlp_scaler.pkl
-  outputs/checkpoints/audio_mlp_best.pt
-  outputs/checkpoints/audio_mlp_hparams.json
-  outputs/metrics/audio_mlp.json
-  outputs/predictions/audio_mlp_softmax_test.npy
+Outputs (per feature set):
+  outputs/checkpoints/audio_mlp_{feature_set}_scaler.pkl
+  outputs/checkpoints/audio_mlp_{feature_set}_best.pt
+  outputs/checkpoints/audio_mlp_{feature_set}_hparams.json
+  outputs/metrics/audio_mlp_{feature_set}.json
+  outputs/predictions/audio_mlp_{feature_set}_softmax_test.npy
 """
 
 import json
@@ -48,6 +50,7 @@ from config import (
     CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR,
     RANDOM_SEED,
     NUM_CLASSES, LABEL2IDX,
+    FEATURE_SETS, DEFAULT_FEATURE_SET,
 )
 from audio.dataset import load_feature_arrays
 from audio.mlp.model import AudioMLP, FocalLoss
@@ -58,8 +61,6 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 for d in (CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-FEATURE_SET  = "egemaps"
-MODEL_TAG    = "audio_mlp"
 BATCH_SIZE   = 64
 N_TRIALS     = 20
 SEARCH_EPOCHS = 30
@@ -159,21 +160,27 @@ def objective(trial, X_train, y_train, X_dev, y_dev) -> float:
     )
 
 
-def main():
-    print(f"Device  : {DEVICE}")
-    print(f"Feature : {FEATURE_SET} (eGeMAPSv02, 88 dims)")
+def main(feature_set: str = DEFAULT_FEATURE_SET):
+    if feature_set not in FEATURE_SETS:
+        raise ValueError(f"Unknown feature set '{feature_set}'. Valid: {list(FEATURE_SETS)}")
+
+    model_tag = f"audio_mlp_{feature_set}"
+    fs_name   = FEATURE_SETS[feature_set][0]
+
+    print(f"Device      : {DEVICE}")
+    print(f"Feature set : {feature_set} ({fs_name})")
 
     print("Loading features...")
-    X_train, y_train = load_feature_arrays("train", FEATURE_SET)
-    X_dev,   y_dev   = load_feature_arrays("dev",   FEATURE_SET)
-    X_test,  y_test  = load_feature_arrays("test",  FEATURE_SET)
+    X_train, y_train = load_feature_arrays("train", feature_set)
+    X_dev,   y_dev   = load_feature_arrays("dev",   feature_set)
+    X_test,  y_test  = load_feature_arrays("test",  feature_set)
 
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
     X_dev   = scaler.transform(X_dev)
     X_test  = scaler.transform(X_test)
 
-    scaler_file = CHECKPOINTS_DIR / f"{MODEL_TAG}_scaler.pkl"
+    scaler_file = CHECKPOINTS_DIR / f"{model_tag}_scaler.pkl"
     with open(scaler_file, "wb") as f:
         pickle.dump(scaler, f)
     print(f"Scaler saved → {scaler_file.name}")
@@ -189,12 +196,12 @@ def main():
     print(f"Best dev mF1 : {study.best_value:.4f}")
     print(f"Best params  : {best}")
 
-    hparams_file = CHECKPOINTS_DIR / f"{MODEL_TAG}_hparams.json"
+    hparams_file = CHECKPOINTS_DIR / f"{model_tag}_hparams.json"
     with open(hparams_file, "w") as f:
         json.dump({**best, "dev_mf1": round(study.best_value, 4)}, f, indent=2)
     print(f"Hparams saved → {hparams_file.name}")
 
-    checkpoint = CHECKPOINTS_DIR / f"{MODEL_TAG}_best.pt"
+    checkpoint = CHECKPOINTS_DIR / f"{model_tag}_best.pt"
     print(f"\nFinal training (max {FINAL_EPOCHS} epochs, patience={FINAL_PATIENCE})...")
     best_dev_mf1 = train_model(
         X_train, y_train, X_dev, y_dev,
@@ -226,22 +233,23 @@ def main():
     evaluate_and_save(
         y_true=np.array(all_labels),
         y_pred=np.array(all_preds),
-        model_name=MODEL_TAG,
+        model_name=model_tag,
     )
 
     softmax = torch.cat(all_probs, dim=0).numpy().astype(np.float32)
-    pred_file = PREDICTIONS_DIR / f"{MODEL_TAG}_softmax_test.npy"
+    pred_file = PREDICTIONS_DIR / f"{model_tag}_softmax_test.npy"
     np.save(pred_file, softmax)
     print(f"Softmax saved → {pred_file.name}  shape {softmax.shape}")
 
-    print("\nComparison (egemaps, wF1):")
-    for tag in [MODEL_TAG, "audio_lr_egemaps", "audio_svm_egemaps"]:
-        p = METRICS_DIR / f"{tag}.json"
+    print(f"\nComparison across feature sets (MLP, mF1):")
+    for fs in FEATURE_SETS:
+        p = METRICS_DIR / f"audio_mlp_{fs}.json"
         if p.exists():
             m = json.loads(p.read_text())
-            marker = " ←" if tag == MODEL_TAG else ""
-            print(f"  {tag:25s}  mF1 {m['macro_f1']:.4f}{marker}")
+            marker = " ←" if fs == feature_set else ""
+            print(f"  {fs:10s}  mF1 {m['macro_f1']:.4f}{marker}")
 
 
 if __name__ == "__main__":
-    main()
+    fs = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_FEATURE_SET
+    main(fs)
