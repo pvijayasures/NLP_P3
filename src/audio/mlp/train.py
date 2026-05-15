@@ -32,6 +32,7 @@ Outputs (per feature set):
 
 import json
 import pickle
+import argparse
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -51,6 +52,7 @@ from config import (
     RANDOM_SEED,
     NUM_CLASSES, LABEL2IDX,
     FEATURE_SETS, DEFAULT_FEATURE_SET,
+    MLP_BEST_PARAMS,
 )
 from audio.dataset import load_feature_arrays
 from audio.mlp.model import AudioMLP, FocalLoss
@@ -160,7 +162,7 @@ def objective(trial, X_train, y_train, X_dev, y_dev) -> float:
     )
 
 
-def main(feature_set: str = DEFAULT_FEATURE_SET):
+def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True):
     if feature_set not in FEATURE_SETS:
         raise ValueError(f"Unknown feature set '{feature_set}'. Valid: {list(FEATURE_SETS)}")
 
@@ -185,22 +187,31 @@ def main(feature_set: str = DEFAULT_FEATURE_SET):
         pickle.dump(scaler, f)
     print(f"Scaler saved → {scaler_file.name}")
 
-    print(f"\nBayesian search ({N_TRIALS} trials, dev macro-F1)...")
-    study = optuna.create_study(direction="maximize")
-    study.optimize(
-        lambda trial: objective(trial, X_train, y_train, X_dev, y_dev),
-        n_trials=N_TRIALS,
-        n_jobs=4,
-        show_progress_bar=True,
-    )
-    best = study.best_params
-    print(f"Best dev mF1 : {study.best_value:.4f}")
-    print(f"Best params  : {best}")
-
-    hparams_file = CHECKPOINTS_DIR / f"{model_tag}_hparams.json"
-    with open(hparams_file, "w") as f:
-        json.dump({**best, "dev_mf1": round(study.best_value, 4)}, f, indent=2)
-    print(f"Hparams saved → {hparams_file.name}")
+    if optimize:
+        print(f"\nBayesian search ({N_TRIALS} trials, dev macro-F1)...")
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            lambda trial: objective(trial, X_train, y_train, X_dev, y_dev),
+            n_trials=N_TRIALS,
+            n_jobs=4,
+            show_progress_bar=True,
+        )
+        best = study.best_params
+        print(f"Best dev mF1 : {study.best_value:.4f}")
+        print(f"Best params  : {best}")
+        hparams_file = CHECKPOINTS_DIR / f"{model_tag}_hparams.json"
+        with open(hparams_file, "w") as f:
+            json.dump({**best, "dev_mf1": round(study.best_value, 4)}, f, indent=2)
+        print(f"Hparams saved → {hparams_file.name}")
+    else:
+        if feature_set not in MLP_BEST_PARAMS:
+            raise ValueError(
+                f"No saved params for '{feature_set}' in config.MLP_BEST_PARAMS. "
+                "Run without --no-optimize first."
+            )
+        best = {k: v for k, v in MLP_BEST_PARAMS[feature_set].items() if k != "dev_mf1"}
+        print(f"\nUsing saved params from config: {best}")
+        print(f"(dev mF1 when found: {MLP_BEST_PARAMS[feature_set]['dev_mf1']})")
 
     checkpoint = CHECKPOINTS_DIR / f"{model_tag}_best.pt"
     print(f"\nFinal training (max {FINAL_EPOCHS} epochs, patience={FINAL_PATIENCE})...")
@@ -252,5 +263,9 @@ def main(feature_set: str = DEFAULT_FEATURE_SET):
 
 
 if __name__ == "__main__":
-    fs = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_FEATURE_SET
-    main(fs)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("feature_set", nargs="?", default=DEFAULT_FEATURE_SET)
+    parser.add_argument("--no-optimize", action="store_true",
+                        help="Skip Optuna search and use saved best params from config")
+    args = parser.parse_args()
+    main(args.feature_set, optimize=not args.no_optimize)

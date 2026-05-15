@@ -49,7 +49,60 @@ FEATURE_SETS: dict[str, tuple[str, str]] = {
     "is10":    ("IS10",          "Functionals"),  # 1582 features — closest to MELD baseline
     "emobase": ("emobase",       "Functionals"),  # 988 features — emotion-specific
 }
-DEFAULT_FEATURE_SET = "egemaps"
+DEFAULT_FEATURE_SET = "is10"
+DEFAULT_CLASSIFIER  = "lr"
+
+# Best hyperparameters per feature set (found by Optuna, metric = dev macro F1)
+LR_BEST_PARAMS: dict[str, dict] = {
+    "is10": {
+        "C": 0.0012355217597810556, "solver": "saga", "max_iter": 3000,
+        "dev_mf1": 0.1809,
+    },
+    "egemaps": {
+        "C": 0.001959526011514871,  "solver": "saga", "max_iter": 2500,
+        "dev_mf1": 0.1882,
+    },
+    "emobase": {
+        "C": 0.0014272758626179937, "solver": "saga", "max_iter": 2000,
+        "dev_mf1": 0.1889,
+    },
+}
+
+SVM_BEST_PARAMS: dict[str, dict] = {
+    "egemaps": {
+        "C": 0.7746080211942609, "tol": 7.109576294541398e-05, "max_iter": 2500,
+        "dev_mf1": 0.1434,
+    },
+    "emobase": {
+        "C": 0.0011906993082973114, "tol": 0.0033713490173047905, "max_iter": 2000,
+        "dev_mf1": 0.1066,
+    },
+    "is10": {
+        "C": 0.0012350877142584726, "tol": 0.00010064717994056096, "max_iter": 1000,
+        "dev_mf1": 0.1161,
+    },
+}
+
+MLP_BEST_PARAMS: dict[str, dict] = {
+    "egemaps": {
+        "hidden_1": 256, "hidden_2": 128,
+        "dropout": 0.3292914326871103, "lr": 0.0012194982531971237,
+        "focal_gamma": 1.1221794786771562,
+        "dev_mf1": 0.1527,
+    },
+    "emobase": {
+        "hidden_1": 128, "hidden_2": 32,
+        "dropout": 0.3374280975221521, "lr": 0.00011831179860048076,
+        "focal_gamma": 1.1422797796707243,
+        "dev_mf1": 0.1639,
+    },
+    "is10": {
+        "hidden_1": 256, "hidden_2": 64,
+        "dropout": 0.3343154038810235, "lr": 0.00014066422434020742,
+        "focal_gamma": 1.5057610510013644,
+        "dev_mf1": 0.1555,
+    },
+}
 
 # Training
 RANDOM_SEED = 42

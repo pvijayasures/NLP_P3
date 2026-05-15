@@ -177,6 +177,29 @@ python -m jupyter nbconvert \
   notebook/audio_experiments.ipynb
 ```
 
+## Run the best model (no hyperparameter search)
+
+The best audio model is **LR + IS10** (macro F1 0.1732 on test, dev macro F1 0.1809).
+
+The hyperparameter search was conducted in `notebook/audio_experiments.ipynb`.
+Based on those results, the best parameters per feature set are stored in `src/config.py`
+under `LR_BEST_PARAMS` and `DEFAULT_FEATURE_SET` / `DEFAULT_CLASSIFIER` are set accordingly.
+
+Use `--no-optimize` to skip Optuna entirely and train directly with the saved parameters:
+
+```bash
+python -m src.audio.lr.train is10 --no-optimize
+```
+
+To run the full Optuna search again (e.g. after changing data or feature extraction):
+
+```bash
+python -m src.audio.lr.train is10        # re-runs hyperparameter search
+python -m src.audio.lr.train egemaps     # also works for other feature sets
+```
+
+---
+
 ## Citation
 
 Please cite the following papers if you find this dataset useful in your research:

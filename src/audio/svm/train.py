@@ -32,6 +32,7 @@ Outputs (per feature set):
 import sys
 import json
 import pickle
+import argparse
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -46,6 +47,7 @@ from config import (
     CHECKPOINTS_DIR, METRICS_DIR, PREDICTIONS_DIR,
     FEATURE_SETS, DEFAULT_FEATURE_SET,
     EMOTION_LABELS, NUM_CLASSES, LABEL2IDX,
+    SVM_BEST_PARAMS,
 )
 from audio.dataset import load_feature_arrays
 from evaluate import evaluate_and_save
@@ -70,7 +72,7 @@ def objective(trial, X_train, y_train, X_dev, y_dev) -> float:
     return f1_score(y_dev, svm.predict(X_dev), average="macro", zero_division=0)
 
 
-def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
+def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
     if feature_set not in FEATURE_SETS:
         raise ValueError(f"Unknown feature set '{feature_set}'. Valid: {list(FEATURE_SETS)}")
 
@@ -91,20 +93,29 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
         pickle.dump(scaler, f)
     print("Scaler saved.")
 
-    print(f"Bayesian search ({N_TRIALS} trials, dev macro-F1)...")
-    study = optuna.create_study(direction="maximize")
-    study.optimize(
-        lambda trial: objective(trial, X_train, y_train, X_dev, y_dev),
-        n_trials=N_TRIALS,
-        n_jobs=4,
-        show_progress_bar=True,
-    )
-    best = study.best_params
-    print(f"Best dev mF1 : {study.best_value:.4f}")
-    print(f"Best params  : {best}")
-
-    with open(CHECKPOINTS_DIR / f"{model_tag}_hparams.json", "w") as f:
-        json.dump({**best, "dev_mf1": round(study.best_value, 4)}, f, indent=2)
+    if optimize:
+        print(f"Bayesian search ({N_TRIALS} trials, dev macro-F1)...")
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            lambda trial: objective(trial, X_train, y_train, X_dev, y_dev),
+            n_trials=N_TRIALS,
+            n_jobs=4,
+            show_progress_bar=True,
+        )
+        best = study.best_params
+        print(f"Best dev mF1 : {study.best_value:.4f}")
+        print(f"Best params  : {best}")
+        with open(CHECKPOINTS_DIR / f"{model_tag}_hparams.json", "w") as f:
+            json.dump({**best, "dev_mf1": round(study.best_value, 4)}, f, indent=2)
+    else:
+        if feature_set not in SVM_BEST_PARAMS:
+            raise ValueError(
+                f"No saved params for '{feature_set}' in config.SVM_BEST_PARAMS. "
+                "Run without --no-optimize first."
+            )
+        best = {k: v for k, v in SVM_BEST_PARAMS[feature_set].items() if k != "dev_mf1"}
+        print(f"Using saved params from config: {best}")
+        print(f"(dev mF1 when found: {SVM_BEST_PARAMS[feature_set]['dev_mf1']})")
 
     print("Training final model with best hyperparameters...")
     svc = LinearSVC(
@@ -148,5 +159,9 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
 
 
 if __name__ == "__main__":
-    fs = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_FEATURE_SET
-    main(fs)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("feature_set", nargs="?", default=DEFAULT_FEATURE_SET)
+    parser.add_argument("--no-optimize", action="store_true",
+                        help="Skip Optuna search and use saved best params from config")
+    args = parser.parse_args()
+    main(args.feature_set, optimize=not args.no_optimize)
