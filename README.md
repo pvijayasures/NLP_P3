@@ -177,25 +177,69 @@ python -m jupyter nbconvert \
   notebook/audio_experiments.ipynb
 ```
 
-## Run the best model (no hyperparameter search)
+## Training the audio models
 
-The best audio model is **LR + IS10** (macro F1 0.1732 on test, dev macro F1 0.1809).
+All three audio classifiers share the same CLI pattern:
 
-The hyperparameter search was conducted in `notebook/audio_experiments.ipynb`.
-Based on those results, the best parameters per feature set are stored in `src/config.py`
-under `LR_BEST_PARAMS` and `DEFAULT_FEATURE_SET` / `DEFAULT_CLASSIFIER` are set accordingly.
+```
+python -m src.audio.<model>.train [feature_set] [--no-optimize]
+```
 
-Use `--no-optimize` to skip Optuna entirely and train directly with the saved parameters:
+- `feature_set` — one of `egemaps` (88 features), `is10` (1582), `emobase` (988). Defaults to `is10`.
+- `--no-optimize` — skip Optuna and use the best hyperparameters already stored in `src/config.py`.
+
+The hyperparameter search was originally conducted in `notebook/audio_experiments.ipynb`.
+Best parameters per model and feature set are stored in `LR_BEST_PARAMS`, `SVM_BEST_PARAMS`,
+and `MLP_BEST_PARAMS` in `src/config.py`.
+
+### Best model — LR + IS10 *(recommended)*
+
+The overall best model by macro F1 (0.1732 on test, 0.1809 on dev):
 
 ```bash
 python -m src.audio.lr.train is10 --no-optimize
 ```
 
-To run the full Optuna search again (e.g. after changing data or feature extraction):
+### Logistic Regression
 
 ```bash
-python -m src.audio.lr.train is10        # re-runs hyperparameter search
-python -m src.audio.lr.train egemaps     # also works for other feature sets
+# use saved best params (fast, reproducible)
+python -m src.audio.lr.train is10     --no-optimize
+python -m src.audio.lr.train egemaps  --no-optimize
+python -m src.audio.lr.train emobase  --no-optimize
+
+# re-run Optuna hyperparameter search (30 trials)
+python -m src.audio.lr.train is10
+python -m src.audio.lr.train egemaps
+python -m src.audio.lr.train emobase
+```
+
+### SVM
+
+```bash
+# use saved best params (fast, reproducible)
+python -m src.audio.svm.train is10     --no-optimize
+python -m src.audio.svm.train egemaps  --no-optimize
+python -m src.audio.svm.train emobase  --no-optimize
+
+# re-run Optuna hyperparameter search (20 trials)
+python -m src.audio.svm.train is10
+python -m src.audio.svm.train egemaps
+python -m src.audio.svm.train emobase
+```
+
+### MLP
+
+```bash
+# use saved best params (fast, reproducible)
+python -m src.audio.mlp.train is10     --no-optimize
+python -m src.audio.mlp.train egemaps  --no-optimize
+python -m src.audio.mlp.train emobase  --no-optimize
+
+# re-run Optuna hyperparameter search (20 trials)
+python -m src.audio.mlp.train is10
+python -m src.audio.mlp.train egemaps
+python -m src.audio.mlp.train emobase
 ```
 
 ---
