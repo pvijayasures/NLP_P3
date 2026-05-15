@@ -62,7 +62,7 @@ def objective(trial, X_train, y_train, X_dev, y_dev) -> float:
     max_iter = trial.suggest_int("max_iter", 500, 3000, step=500)
     clf = LogisticRegression(
         C=C, solver=solver, max_iter=max_iter,
-        class_weight="balanced", random_state=42,
+        class_weight="balanced", random_state=42, n_jobs=-1,
     )
     clf.fit(X_train, y_train)
     return f1_score(y_dev, clf.predict(X_dev), average="macro", zero_division=0)
@@ -94,6 +94,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
     study.optimize(
         lambda trial: objective(trial, X_train, y_train, X_dev, y_dev),
         n_trials=N_TRIALS,
+        n_jobs=-1,
         show_progress_bar=True,
     )
     best = study.best_params
@@ -106,7 +107,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET) -> None:
     print("Training final model with best hyperparameters...")
     clf = LogisticRegression(
         C=best["C"], solver=best["solver"], max_iter=best["max_iter"],
-        class_weight="balanced", random_state=42,
+        class_weight="balanced", random_state=42, n_jobs=-1,
     )
     clf.fit(X_train, y_train)
 

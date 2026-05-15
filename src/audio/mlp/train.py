@@ -190,6 +190,7 @@ def main(feature_set: str = DEFAULT_FEATURE_SET):
     study.optimize(
         lambda trial: objective(trial, X_train, y_train, X_dev, y_dev),
         n_trials=N_TRIALS,
+        n_jobs=-1,
         show_progress_bar=True,
     )
     best = study.best_params
