@@ -242,6 +242,37 @@ python -m src.audio.mlp.train egemaps
 python -m src.audio.mlp.train emobase
 ```
 
+
+## Training the text model
+
+The text classification pipeline utilizes a fine-tuned `roberta-base` model. We experimented with two approaches: analyzing isolated utterances ("no context") versus appending the previous conversational utterance ("with context"). 
+
+All text experiments, including data preprocessing, baseline training, and Optuna hyperparameter optimization, are conducted in:
+`notebook/text_experiments.ipynb`
+
+### Best model — RoBERTa + Context *(recommended)*
+
+[cite_start]Including the previous conversational utterance significantly improved the model's ability to classify emotions[cite: 1, 3]. The overall best text model was found during Optuna hyperparameter tuning (Trial 5) using the context-appended dataset:
+
+* [cite_start]**Macro F1:** 0.434 [cite: 6]
+* [cite_start]**Weighted F1:** 0.562 [cite: 6]
+* [cite_start]**Validation Accuracy:** 0.549 [cite: 5]
+
+[cite_start]*Note on performance:* The original authors of the MELD dataset achieved a baseline weighted F1 score of 0.570 using text-only models[cite: 8]. [cite_start]Our tuned model's score of 0.562 is highly competitive [cite: 9][cite_start], especially considering we increased the difficulty of the classification task by splitting the original "surprise" emotion into `surprise_positive` and `surprise_negative` (creating an 8-class problem instead of 7)[cite: 10].
+
+### Hyperparameters
+
+[cite_start]The optimal hyperparameters discovered via Optuna and used for the best context model are[cite: 7]:
+* **Learning Rate:** 8.2e-06
+* **Train Batch Size:** 8
+* **Train Epochs:** 4
+* **Weight Decay:** 0.08
+
+### Running the pipeline and extracting features
+
+Because the text model operates inside a Jupyter Notebook, running the training and extraction pipeline is done sequentially via `notebook/text_experiments.ipynb`. 
+* [cite_start]`plots/confusion_matrix_text.png`: Visual evaluation of the text model's classification accuracy and common misclassifications[cite: 11].
+
 ---
 
 ## Citation
