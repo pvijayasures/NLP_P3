@@ -137,8 +137,9 @@ LATE_FUSION_BEST_PARAMS: dict[str, dict] = {}
 #   multimodal: multimodal_{variant}              e.g. multimodal_late_fusion
 # ---------------------------------------------------------------------------
 
-def audio_tag(model_key: str, feature_set: str) -> str:
-    return f"audio_{model_key}_{feature_set}"
+def audio_tag(model_key: str, feature_set: str, context: bool = False) -> str:
+    tag = f"audio_{model_key}_{feature_set}"
+    return f"{tag}_ctx" if context else tag
 
 def text_tag(model_key: str) -> str:
     return f"text_{model_key}"

@@ -74,21 +74,23 @@ def objective(trial, X_train, y_train, X_dev, y_dev) -> float:
     return f1_score(y_dev, svm.predict(X_dev), average="macro", zero_division=0)
 
 
-def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True) -> None:
+def main(feature_set: str = DEFAULT_FEATURE_SET, optimize: bool = True, context: bool = False) -> None:
     if feature_set not in FEATURE_SETS:
         raise ValueError(f"Unknown feature set '{feature_set}'. Valid: {list(FEATURE_SETS)}")
 
-    tag          = audio_tag("svm", feature_set)
+    tag          = audio_tag("svm", feature_set, context=context)
     scaler_path  = get_scaler_path(tag)
     hparams_path = get_hparams_path(tag)
     model_path   = get_model_path(tag)
     pred_path    = get_prediction_path(tag, split="test")
     print(f"Feature set : {feature_set} ({FEATURE_SETS[feature_set][0]})")
+    print(f"Context     : {context}  (tag: {tag})")
 
     print("Loading features...")
-    X_train, y_train = load_feature_arrays("train", feature_set)
-    X_dev,   y_dev   = load_feature_arrays("dev",   feature_set)
-    X_test,  y_test  = load_feature_arrays("test",  feature_set)
+    X_train, y_train = load_feature_arrays("train", feature_set, use_context=context)
+    X_dev,   y_dev   = load_feature_arrays("dev",   feature_set, use_context=context)
+    X_test,  y_test  = load_feature_arrays("test",  feature_set, use_context=context)
+    print(f"Input dim   : {X_train.shape[1]}")
 
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
@@ -173,5 +175,7 @@ if __name__ == "__main__":
     parser.add_argument("feature_set", nargs="?", default=DEFAULT_FEATURE_SET)
     parser.add_argument("--no-optimize", action="store_true",
                         help="Skip Optuna search and use saved best params from config")
+    parser.add_argument("--context", action="store_true",
+                        help="Prepend previous utterance features (doubles input dim)")
     args = parser.parse_args()
-    main(args.feature_set, optimize=not args.no_optimize)
+    main(args.feature_set, optimize=not args.no_optimize, context=args.context)

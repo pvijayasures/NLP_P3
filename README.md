@@ -7,7 +7,7 @@ Wir untersuchen, ob Stimmmerkmale oder Sprachinhalt besser geeignet sind, um Emo
 ### Umsetzung
 - **Modell 1 (Audio → Emotion):** openSMILE eGeMAPSv02 Funktionals (88 Features) als Audiorepräsentation, normalisiert mit `StandardScaler`, klassifiziert mit `Logistic Regression`.
 - **Modell 2 (Text → Emotion):** `roberta-base` direkt auf den MELD-Transkripten feinabgestimmt (End-to-End), linearer Klassifikations-Head.
-- **Modell 3 (Multimodal):** eGeMAPS-Features und RoBERTa-CLS-Embedding (aus dem feinabgestimmten Modell) konkateniert → 2-Layer MLP.
+- **Modell 3 (Multimodal):** Audio-Softmax (8 dims, bestes Modell per Komplementaritätsanalyse) und skaliertes RoBERTa-CLS-Embedding (768 dims) konkateniert → 2-Layer MLP (776 dims). Zusätzlich wird ein Late-Fusion-Ceiling-Check durchgeführt (gewichteter Durchschnitt der Softmax-Ausgaben beider Modalitäten).
 
 ### Datenquelle (MELD)
 Wir verwenden den MELD-Datensatz (Friends-Dialoge, ca. 13k Utterances). Die `surprise`-Klasse wird anhand der MELD-Sentiment-Spalte in zwei Klassen aufgeteilt, sodass **8 Emotionsklassen** entstehen: `anger`, `disgust`, `sadness`, `joy`, `neutral`, `fear`, `surprise_positive`, `surprise_negative`.
@@ -182,11 +182,12 @@ python -m jupyter nbconvert \
 All three audio classifiers share the same CLI pattern:
 
 ```
-python -m src.audio.<model>.train [feature_set] [--no-optimize]
+python -m src.audio.<model>.train [feature_set] [--no-optimize] [--context]
 ```
 
 - `feature_set` — one of `egemaps` (88 features), `is10` (1582), `emobase` (988). Defaults to `is10`.
 - `--no-optimize` — skip Optuna and use the best hyperparameters already stored in `src/config.py`.
+- `--context` — prepend the **previous utterance's** audio features to each utterance (doubles input dim, e.g. IS10: 1582 → 3164). Adds single-step conversational context, analogous to the `</s>` context used in the text model. Outputs are saved under a separate `_ctx` tag (e.g. `audio_lr_is10_ctx`) so non-context models are never overwritten.
 
 The hyperparameter search was originally conducted in `notebook/audio_experiments.ipynb`.
 Best parameters per model and feature set are stored in `LR_BEST_PARAMS`, `SVM_BEST_PARAMS`,
@@ -272,6 +273,141 @@ All text experiments, including data preprocessing, baseline training, and Optun
 
 Because the text model operates inside a Jupyter Notebook, running the training and extraction pipeline is done sequentially via `notebook/text_experiments.ipynb`. 
 * [cite_start]`plots/confusion_matrix_text.png`: Visual evaluation of the text model's classification accuracy and common misclassifications[cite: 11].
+
+---
+
+## Multimodal Experiment Notebook
+
+All multimodal experiments — complementarity analysis, feature-fusion MLP, and late-fusion ceiling check — are in:
+`notebook/multimodal_experiments.ipynb`
+
+> **Requires** the preprocessing pipeline and both the audio and text experiments to have run first.
+
+### Audio model selection (Section 1c)
+
+The audio model used in the fusion is chosen automatically via a **complementarity analysis**:
+each of the 9 trained audio models (LR / SVM / MLP × eGeMAPS / IS10 / emobase) is scored by
+how well it covers the emotion classes where the text model is weakest.  
+The score is a weighted average of the audio model's per-class F1 over the 7 **minority classes**
+(neutral excluded), weighted by `1 − text_F1` per class.
+
+The winner (`audio_mlp_egemaps`) is selected automatically and used for the rest of the pipeline.
+
+### Feature-fusion MLP (Modell 3)
+
+```
+audio_mlp_egemaps softmax (8d) ‖ RoBERTa CLS (768d, StandardScaler)  →  776-dim  →  MLP
+```
+
+- Audio: `predict_proba` from the saved `audio_mlp_egemaps` model
+- Text: `[CLS]` token of the fine-tuned RoBERTa (`last_hidden_state[:, 0, :]`), normalized
+- MLP: 2-layer with BatchNorm, Dropout, FocalLoss; hyperparameters found via Optuna (20 trials)
+- Artifacts: `outputs/checkpoints/multimodal_feature_fusion_best.pt`, `outputs/metrics/multimodal_feature_fusion.json`
+
+### Late-fusion ceiling check
+
+A performance-proportional weighted average of audio and text softmax outputs:
+
+```
+w_audio = audio_dev_mF1 / (text_dev_mF1 + audio_dev_mF1)
+fused   = w_text × text_softmax + w_audio × audio_softmax
+```
+
+No training needed. If the fused result does not beat text alone, it confirms that audio and
+text carry no complementary signal in MELD.  
+Artifacts: `outputs/metrics/multimodal_late_fusion.json`, `outputs/predictions/multimodal_late_fusion_softmax_test.npy`
+
+### Running the notebook
+
+```bash
+jupyter notebook notebook/multimodal_experiments.ipynb
+```
+
+Select the **NLP_P3 (venv)** kernel and run cells top-to-bottom.
+
+**Cell order and dependencies:**
+
+| Section | What it does | Requires |
+|---|---|---|
+| 1 · Load & Align | Reads manifests + IS10 parquet | preprocessing done |
+| 1b · Audio Baseline | Trains `audio_lr_is10` if missing | Step 2 features |
+| 1c · Complementarity | Selects best audio model | `text_roberta.json` (section 2d) |
+| 2 · RoBERTa Checkpoint | Finds / trains RoBERTa | `data/models/optuna_trial_5/` |
+| 2d · Evaluate RoBERTa | Saves `text_roberta.json` | Section 2 checkpoint |
+| 2c · CLS Extraction | Extracts + caches CLS embeddings | Section 2 checkpoint |
+| 3 · Fused Vectors | Builds 776-dim feature matrix | Sections 1 + 2c |
+| 5 · Optuna | Searches MLP hyperparameters | Section 3 |
+| 6 · Final Training | Trains best MLP | Section 5 |
+| 7 · Evaluate | Saves fusion MLP metrics | Section 6 |
+| 8b · Late Fusion | Ceiling check | Sections 3 + 2d |
+| 9 · Comparison | Bar charts + full F1 table | All above |
+
+> **Note on first run:** Section 1c requires `text_roberta.json` which is created in section 2d.
+> On the very first run the analysis falls back to `audio_mlp_egemaps` (set in the config block).
+> Re-run section 1c after section 2d has completed to confirm the selection.
+
+### Outputs
+
+| File | Description |
+|---|---|
+| `outputs/metrics/multimodal_feature_fusion.json` | Feature-fusion MLP test metrics |
+| `outputs/metrics/multimodal_late_fusion.json` | Late-fusion ceiling check test metrics |
+| `outputs/predictions/multimodal_feature_fusion_softmax_test.npy` | MLP softmax (2610 × 8) |
+| `outputs/predictions/multimodal_late_fusion_softmax_test.npy` | Late-fusion softmax (2610 × 8) |
+| `outputs/plots/audio_text_overlap.png` | Complementarity heatmap (absolute + delta F1) |
+| `outputs/plots/comparison_fusion.png` | Macro / Weighted F1 bar charts (all models) |
+| `outputs/plots/all_models_f1_table.png` | Full per-class F1 table (all 12 models) |
+
+---
+
+## Results & Comparison with MELD Baseline
+
+### Our results (test set, 8 classes)
+
+| Model | Macro F1 | Weighted F1 |
+|---|---|---|
+| Audio LR IS10 *(best audio)* | 0.1732 | 0.2479 |
+| Audio MLP eGeMAPS | 0.1405 | 0.1067 |
+| Audio SVM eGeMAPS | 0.1201 | 0.3548 |
+| Text RoBERTa | 0.4338 | 0.5879 |
+| **Late Fusion** *(best overall)* | **0.4371** | **0.5884** |
+| Feature Fusion MLP | 0.4239 | 0.5570 |
+
+### Comparison with MELD paper (Poria et al., 2019)
+
+The original MELD paper reports results on **7 emotion classes** (surprise not split).
+Our setup uses **8 classes** (surprise split into `surprise_positive` / `surprise_negative`), making the task harder.
+
+| Modality | MELD paper (weighted F1) | Ours (weighted F1) | Δ |
+|---|---|---|---|
+| Audio only | 0.4179 | 0.2479 | −0.170 |
+| Text only | 0.5703 | **0.5879** | **+0.018** ✓ |
+| Multimodal | **0.6025** | 0.5884 | −0.014 |
+
+### Why the audio gap exists
+
+The paper's audio model outperforms ours by a large margin due to three compounding factors:
+
+| Factor | MELD paper | Our implementation |
+|---|---|---|
+| **Feature set** | openSMILE **ComParE** — 6373 dims | openSMILE IS10 — 1582 dims |
+| **Feature selection** | L2-based SVM selection on 6373 dims | None |
+| **Model** | **DialogueRNN** — tracks speaker state across the full dialogue via 3 GRUs | LR / SVM / MLP — single utterance, no context |
+
+DialogueRNN models the entire conversation with three stacked GRUs:
+- *Global GRU* — encodes all preceding utterances from all speakers
+- *Party GRU* — tracks each individual speaker's emotional state
+- *Emotion GRU* — decodes the final emotion label
+
+Our audio classifiers treat every utterance in isolation — no knowledge of who is speaking or what was said before.
+
+### Why our text model is stronger
+
+Despite the harder 8-class setup, our fine-tuned `roberta-base` (0.5879) outperforms the paper's text-only DialogueRNN (0.5703). Pre-trained transformer representations compensate for the lack of full conversational context; appending the previous utterance via `</s>` provides sufficient local context for emotion recognition in scripted dialogue.
+
+### Multimodal fusion finding
+
+Our fusion result (late fusion weighted F1: **0.5884**) nearly matches text alone (0.5879) — a gain of only +0.0005. The complementarity analysis confirms this: no audio model achieves positive delta F1 against the text model on any minority emotion class. The audio branch is too weak (weighted F1 0.25 vs paper's 0.42) to contribute meaningful complementary signal. The MELD paper's +0.032 fusion gain comes directly from having a much stronger audio model as the second branch.
 
 ---
 
