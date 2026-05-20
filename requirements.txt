@@ -9,3 +9,6 @@ seaborn==0.13.2
 
 torchaudio
 tqdm
+
+shap
+lime
