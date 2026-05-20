@@ -278,44 +278,31 @@ Because the text model operates inside a Jupyter Notebook, running the training 
 
 ## Multimodal Experiment Notebook
 
-All multimodal experiments — complementarity analysis, feature-fusion MLP, and late-fusion ceiling check — are in:
-`notebook/multimodal_experiments.ipynb`
+All multimodal experiments are in `notebook/multimodal_experiments.ipynb`. The notebook runs a **comprehensive fusion sweep**: every trained audio model × RoBERTa, with **both** fusion strategies (late + feature-fusion MLP) and a final XAI section that explains the winners.
 
 > **Requires** the preprocessing pipeline and both the audio and text experiments to have run first.
 
-### Audio model selection (Section 1c)
+### Structure
 
-The audio model used in the fusion is chosen automatically via a **complementarity analysis**:
-each of the 9 trained audio models (LR / SVM / MLP × eGeMAPS / IS10 / emobase) is scored by
-how well it covers the emotion classes where the text model is weakest.  
-The score is a weighted average of the audio model's per-class F1 over the 7 **minority classes**
-(neutral excluded), weighted by `1 − text_F1` per class.
+| Section | What it does |
+|---|---|
+| 1 · Load & Align | Reads manifests + IS10 parquet + context-linked text |
+| 2 · Audio Baseline | Trains `audio_lr_is10` if missing |
+| 3 · Text Model (RoBERTa) | Checkpoint load / train, test eval, CLS extraction |
+| 4 · Complementarity Analysis | Per-class F1 heatmap; ranks audio models by minority-class coverage of text weaknesses |
+| 5 · Late Fusion — All Combinations | `(audio + text) / 2` for every audio model; per-class delta heatmap |
+| 6 · Feature Fusion MLP — All Combinations | `concat(audio_softmax, scaled CLS) → MLP` with mini-Optuna per audio model; per-class delta + late-vs-feature comparison |
+| 7 · Final Comparison | Mega-heatmap (all models × all classes) + best-of-group summary |
+| 8 · XAI & Insights | LR coefficient heatmap · per-modality confusion matrices · modality ablation · audio help/hurt analysis |
 
-The winner (`audio_mlp_egemaps`) is selected automatically and used for the rest of the pipeline.
+### Fusion variants and naming
 
-### Feature-fusion MLP (Modell 3)
+| Tag pattern | Strategy |
+|---|---|
+| `mm_late_<audio_short>` | Parameter-free 50/50 softmax average |
+| `mm_ff_<audio_short>` | 2-layer MLP on `audio_softmax (8d) ‖ scaled CLS (768d) = 776-d` input, mini-Optuna (10 trials, 20 epochs) |
 
-```
-audio_mlp_egemaps softmax (8d) ‖ RoBERTa CLS (768d, StandardScaler)  →  776-dim  →  MLP
-```
-
-- Audio: `predict_proba` from the saved `audio_mlp_egemaps` model
-- Text: `[CLS]` token of the fine-tuned RoBERTa (`last_hidden_state[:, 0, :]`), normalized
-- MLP: 2-layer with BatchNorm, Dropout, FocalLoss; hyperparameters found via Optuna (20 trials)
-- Artifacts: `outputs/checkpoints/multimodal_feature_fusion_best.pt`, `outputs/metrics/multimodal_feature_fusion.json`
-
-### Late-fusion ceiling check
-
-A performance-proportional weighted average of audio and text softmax outputs:
-
-```
-w_audio = audio_dev_mF1 / (text_dev_mF1 + audio_dev_mF1)
-fused   = w_text × text_softmax + w_audio × audio_softmax
-```
-
-No training needed. If the fused result does not beat text alone, it confirms that audio and
-text carry no complementary signal in MELD.  
-Artifacts: `outputs/metrics/multimodal_late_fusion.json`, `outputs/predictions/multimodal_late_fusion_softmax_test.npy`
+So `mm_late_svm_egemaps` is RoBERTa late-fused with `audio_svm_egemaps`, and `mm_ff_mlp_is10_ctx` is the feature-fusion MLP trained on top of `audio_mlp_is10_ctx`'s softmax.
 
 ### Running the notebook
 
@@ -323,40 +310,25 @@ Artifacts: `outputs/metrics/multimodal_late_fusion.json`, `outputs/predictions/m
 jupyter notebook notebook/multimodal_experiments.ipynb
 ```
 
-Select the **NLP_P3 (venv)** kernel and run cells top-to-bottom.
-
-**Cell order and dependencies:**
-
-| Section | What it does | Requires |
-|---|---|---|
-| 1 · Load & Align | Reads manifests + IS10 parquet | preprocessing done |
-| 1b · Audio Baseline | Trains `audio_lr_is10` if missing | Step 2 features |
-| 1c · Complementarity | Selects best audio model | `text_roberta.json` (section 2d) |
-| 2 · RoBERTa Checkpoint | Finds / trains RoBERTa | `data/models/optuna_trial_5/` |
-| 2d · Evaluate RoBERTa | Saves `text_roberta.json` | Section 2 checkpoint |
-| 2c · CLS Extraction | Extracts + caches CLS embeddings | Section 2 checkpoint |
-| 3 · Fused Vectors | Builds 776-dim feature matrix | Sections 1 + 2c |
-| 5 · Optuna | Searches MLP hyperparameters | Section 3 |
-| 6 · Final Training | Trains best MLP | Section 5 |
-| 7 · Evaluate | Saves fusion MLP metrics | Section 6 |
-| 8b · Late Fusion | Ceiling check | Sections 3 + 2d |
-| 9 · Comparison | Bar charts + full F1 table | All above |
-
-> **Note on first run:** Section 1c requires `text_roberta.json` which is created in section 2d.
-> On the very first run the analysis falls back to `audio_mlp_egemaps` (set in the config block).
-> Re-run section 1c after section 2d has completed to confirm the selection.
+Select the **NLP_P3 (venv)** kernel and run cells top-to-bottom. The feature-fusion sweep (§6.2) is the only heavy cell (~30–60 min on CPU); it skips combinations whose metrics already exist, so it's incremental.
 
 ### Outputs
 
-| File | Description |
+| File pattern | Description |
 |---|---|
-| `outputs/metrics/multimodal_feature_fusion.json` | Feature-fusion MLP test metrics |
-| `outputs/metrics/multimodal_late_fusion.json` | Late-fusion ceiling check test metrics |
-| `outputs/predictions/multimodal_feature_fusion_softmax_test.npy` | MLP softmax (2610 × 8) |
-| `outputs/predictions/multimodal_late_fusion_softmax_test.npy` | Late-fusion softmax (2610 × 8) |
-| `outputs/plots/audio_text_overlap.png` | Complementarity heatmap (absolute + delta F1) |
-| `outputs/plots/comparison_fusion.png` | Macro / Weighted F1 bar charts (all models) |
-| `outputs/plots/all_models_f1_table.png` | Full per-class F1 table (all 12 models) |
+| `outputs/metrics/mm_late_<audio>.json` | One late-fusion result per audio model |
+| `outputs/metrics/mm_ff_<audio>.json` | One feature-fusion MLP result per audio model |
+| `outputs/predictions/mm_*_softmax_test.npy` | Fused softmax per variant (2610 × 8) |
+| `outputs/plots/late_fusion_all_models.png` | Bar chart: fused mF1 + Δ vs text for every late-fusion combination |
+| `outputs/plots/late_fusion_perclass_delta.png` | Per-class F1 delta heatmap, all late-fusion variants |
+| `outputs/plots/feature_fusion_all_models.png` | Same for feature-fusion MLP |
+| `outputs/plots/feature_fusion_perclass_delta.png` | Per-class delta heatmap, all FF variants |
+| `outputs/plots/late_vs_feature_fusion.png` | Grouped bar: same audio model under both strategies |
+| `outputs/plots/all_models_full_table.png` | Mega F1 table (audio / text / late / feature) |
+| `outputs/plots/xai_lr_coefficients.png` | Top-40 acoustic features × emotion (LR coefficients) |
+| `outputs/plots/xai_confusion_matrices.png` | Side-by-side row-normalised CMs (audio / text / late / FF) |
+| `outputs/plots/xai_modality_ablation.png` | Per-class drop in P(true) when audio or text is replaced with its mean |
+| `outputs/plots/xai_audio_help_hurt.png` | Per-class counts of utterances where audio rescued vs broke text |
 
 ---
 
@@ -364,14 +336,21 @@ Select the **NLP_P3 (venv)** kernel and run cells top-to-bottom.
 
 ### Our results (test set, 8 classes)
 
+The full fusion sweep (9 audio models × 2 strategies = 18 fused variants, plus baselines) is in the notebook. Headline numbers:
+
 | Model | Macro F1 | Weighted F1 |
 |---|---|---|
-| Audio LR IS10 *(best audio)* | 0.1732 | 0.2479 |
-| Audio MLP eGeMAPS | 0.1405 | 0.1067 |
-| Audio SVM eGeMAPS | 0.1201 | 0.3548 |
+| Audio LR IS10 *(best audio standalone, mF1)* | 0.1732 | 0.2479 |
+| Audio SVM eGeMAPS *(best audio standalone, wF1)* | 0.1201 | 0.3548 |
 | Text RoBERTa | 0.4338 | 0.5879 |
-| **Late Fusion** *(best overall)* | **0.4371** | **0.5884** |
-| Feature Fusion MLP | 0.4239 | 0.5570 |
+| **Late fusion: RoBERTa + SVM eGeMAPS** *(best overall)* | **0.4535** | **0.6178** |
+| Late fusion: RoBERTa + SVM emobase | 0.4525 | 0.6184 |
+| Late fusion: RoBERTa + LR IS10 | 0.4432 | 0.5911 |
+| Feature fusion MLP (best: `mm_ff_mlp_is10_ctx`) | 0.4205 | 0.5408 |
+
+### Key observation: the trained MLP loses to the parameter-free average
+
+Across every audio model, the parameter-free 50/50 late fusion **beats** the feature-fusion MLP by roughly +0.03 mF1. The best feature-fusion variant (0.4205) is actually **below text-only** (0.4338) — the MLP overfits its 776-d input on a dataset this small. See `outputs/plots/late_vs_feature_fusion.png`.
 
 ### Comparison with MELD paper (Poria et al., 2019)
 
@@ -380,9 +359,11 @@ Our setup uses **8 classes** (surprise split into `surprise_positive` / `surpris
 
 | Modality | MELD paper (weighted F1) | Ours (weighted F1) | Δ |
 |---|---|---|---|
-| Audio only | 0.4179 | 0.2479 | −0.170 |
-| Text only | 0.5703 | **0.5879** | **+0.018** ✓ |
-| Multimodal | **0.6025** | 0.5884 | −0.014 |
+| Audio only | 0.4179 | 0.2479 *(LR + IS10)* | −0.170 |
+| Text only | 0.5703 | **0.5879** *(RoBERTa)* | **+0.018** ✓ |
+| Multimodal | **0.6025** | **0.6178** *(late fusion + SVM eGeMAPS)* | **+0.015** ✓ |
+
+> **Note:** the prior README reported a fusion wF1 of 0.5884 (single complementarity-selected model). The comprehensive sweep surfaced that `audio_svm_egemaps` late-fused with RoBERTa actually exceeds the MELD paper's multimodal wF1 — though see the "fusion finding" note below: the gain is mostly a neutral-class calibration effect, not genuine minority-class signal.
 
 ### Why the audio gap exists
 
@@ -407,7 +388,23 @@ Despite the harder 8-class setup, our fine-tuned `roberta-base` (0.5879) outperf
 
 ### Multimodal fusion finding
 
-Our fusion result (late fusion weighted F1: **0.5884**) nearly matches text alone (0.5879) — a gain of only +0.0005. The complementarity analysis confirms this: no audio model achieves positive delta F1 against the text model on any minority emotion class. The audio branch is too weak (weighted F1 0.25 vs paper's 0.42) to contribute meaningful complementary signal. The MELD paper's +0.032 fusion gain comes directly from having a much stronger audio model as the second branch.
+The comprehensive sweep (§5–6 in the multimodal notebook) confirms — with much more nuance than the original single-pair analysis — that audio adds a real but **shallow** signal to fusion on MELD.
+
+**1 · SVM models dominate late fusion despite the worst standalone macro F1.** `audio_svm_egemaps` scores 0.12 mF1 on its own (vs LR IS10 at 0.17), yet `mm_late_svm_egemaps` is the best fused result (0.4535 mF1 / 0.6178 wF1). Reason: LinearSVC + CalibratedClassifierCV produces a well-spread probability distribution that nudges RoBERTa's argmax in the right direction; the SVM's poor argmax accuracy doesn't matter because we're averaging softmaxes.
+
+**2 · The SVM fusion gain is mostly a neutral-recall artefact.** XAI section §8.4 shows that audio rescues many neutral utterances that text underpredicts (neutral recall jumps 0.65 → 0.82), but the minority emotion classes (anger, sadness, disgust, fear, surprise) barely move (±0.02 F1). So the macro F1 improvement is essentially the SVM correcting a calibration bias, not adding genuine minority-class signal.
+
+**3 · The trained MLP underperforms the average.** Every feature-fusion variant loses to its late-fusion counterpart by ~0.03 mF1, and the best FF result (0.4205) is *below* text-only (0.4338). The 776-d MLP overfits with only ~10k training utterances; the parameter-free average is the right choice for this dataset size.
+
+**4 · The DialogueRNN gap remains the real ceiling.** The MELD paper's +0.032 wF1 fusion gain over text comes from a 2× stronger audio branch (0.42 wF1 vs our best at 0.25), not from a smarter fusion mechanism. To close that gap we'd need dialogue-level context modelling (DialogueRNN, COSMIC) or pre-trained acoustic representations (wav2vec2, HuBERT), not better classifiers on utterance-level openSMILE functionals.
+
+### Acoustic interpretability (XAI §8.1)
+
+LR coefficient inspection on the best LR audio model (`audio_lr_is10`) shows the top-40 most influential features per emotion (`outputs/plots/xai_lr_coefficients.png`). Patterns that emerged:
+- **F0 (pitch) statistics** are the dominant signal across all high-arousal classes (anger, joy, surprise)
+- **Spectral roll-off / slope** features distinguish neutral and sadness from high-arousal classes
+- **Voice quality** features (jitter, shimmer) carry weight specifically for fear and sadness
+- IS10's MFCC functionals contribute broadly but no single coefficient dominates — the model relies on many small weighted contributions rather than a few discriminative features.
 
 ---
 
