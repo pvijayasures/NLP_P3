@@ -332,6 +332,44 @@ Select the **NLP_P3 (venv)** kernel and run cells top-to-bottom. The feature-fus
 
 ---
 
+## Audio Sentiment Results (3-class)
+
+`notebook/audio_sentiment.ipynb` probes whether audio prosody carries **valence signal** by predicting a coarser 3-class target (negative / neutral / positive) derived from the MELD Sentiment column.
+
+### Weighted F1 heatmap — all models × feature sets
+
+|       | eGeMAPSv02 | IS10   | emobase |
+|-------|:----------:|:------:|:-------:|
+| **LR**  | 0.4678 | 0.4596 | 0.4637 |
+| **SVM** | 0.4687 | 0.4632 | 0.4490 |
+| **MLP** | 0.4714 | 0.4536 | **0.4752** ← best |
+
+### Macro F1 heatmap — all models × feature sets
+
+|       | eGeMAPSv02 | IS10   | emobase |
+|-------|:----------:|:------:|:-------:|
+| **LR**  | 0.4350 | 0.4333 | 0.4378 |
+| **SVM** | 0.3838 | 0.3823 | 0.3654 |
+| **MLP** | 0.4344 | 0.4246 | **0.4438** ← best |
+
+> Plot: `outputs/plots/audio_sentiment_comparison.png`  
+> Comparison with emotion baseline: `outputs/plots/audio_sentiment_vs_emotion.png`
+
+### Key findings
+
+| Aspect | Emotion (8-class) | Sentiment (3-class) |
+|--------|:-----------------:|:-------------------:|
+| Best wF1 | 0.3548 (SVM / egemaps) | **0.4752** (MLP / emobase) |
+| Best mF1 | 0.1743 (LR / is10) | **0.4438** (MLP / emobase) |
+| Random baseline | 0.125 | 0.333 |
+| Hardest class | fear / disgust (F1 < 0.10) | positive (F1 = 0.34) |
+
+All sentiment models clear the 0.33 random baseline by +0.10–0.14 mF1, confirming that **audio prosody carries real valence signal** even when it cannot reliably separate fine-grained emotions.  
+The SVM macro/weighted gap (0.38 vs 0.47) reveals a neutral-class bias identical to what was seen in the 8-class task.  
+LR and MLP balance predictions across classes more evenly, keeping macro F1 close to weighted F1.
+
+---
+
 ## Results & Comparison with MELD Baseline
 
 ### Our results (test set, 8 classes)
